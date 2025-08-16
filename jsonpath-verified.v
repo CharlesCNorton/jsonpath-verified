@@ -7,9 +7,11 @@
   Added (vs. baseline):
    * JSON numbers generalized to rationals (Q)
    * String lexicographic ordering (ASCII) for <, <=, >, >=
-   * Small total regex engine with Brzozowski derivatives
+   * Small total regex engine with Brzozowski derivatives (+ simplifier)
    * Filters: match()/search() over strings
    * Conservative static typing checker module (no proofs required)
+   * Tests & naturalistic end-to-end examples
+   * Extraction at the end
 *)
 
 From Coq Require Import
@@ -21,11 +23,23 @@ Open Scope string_scope.
 Open Scope Z_scope.
 
 (* ------------------------------------------------------------ *)
-(* Utilities *)
+(* Utilities                                                    *)
 (* ------------------------------------------------------------ *)
 
 Definition string_eqb (s1 s2 : string) : bool :=
   if string_dec s1 s2 then true else false.
+
+(* Helpful spec for string_eqb *)
+Lemma string_eqb_true_iff :
+  forall s1 s2, string_eqb s1 s2 = true <-> s1 = s2.
+Proof.
+  intros s1 s2; unfold string_eqb.
+  destruct (string_dec s1 s2) as [Heq|Hneq]; split; intro H.
+  - exact Heq.
+  - reflexivity.
+  - exfalso; discriminate H.
+  - exfalso; apply Hneq; assumption.
+Qed.
 
 (* zip with indices [0..n-1] *)
 Definition index_zip {A} (xs : list A) : list (nat * A) :=
@@ -73,7 +87,7 @@ Definition Q_of_Z (z:Z) : Q := inject_Z z.
 Definition Q_of_nat (n:nat) : Q := inject_Z (Z.of_nat n).
 
 (* ------------------------------------------------------------ *)
-(* JSON core *)
+(* JSON core                                                    *)
 (* ------------------------------------------------------------ *)
 
 Module JSON.
@@ -93,7 +107,7 @@ End JSON.
 Definition mk_node (p:JSON.path) (v:JSON.value) : JSON.node := (p, v).
 
 (* ------------------------------------------------------------ *)
-(* JSONPath AST *)
+(* JSONPath AST                                                 *)
 (* ------------------------------------------------------------ *)
 
 Module JSONPath.
@@ -159,7 +173,7 @@ End JSONPath.
 Import JSON JSONPath.
 
 (* ------------------------------------------------------------ *)
-(* Slice helpers *)
+(* Slice helpers                                                *)
 (* ------------------------------------------------------------ *)
 
 Definition clamp (x lo hi : Z) : Z := Z.max lo (Z.min hi x).
@@ -224,8 +238,31 @@ Fixpoint nth_default (d:JSON.value) (xs:list JSON.value) (n:nat) : JSON.value :=
   | _::xs', S n' => nth_default d xs' n'
   end.
 
+(* Mapping equality used to align nth_error with nth_default *)
+Lemma nth_error_default_eq :
+  forall (xs:list JSON.value) n,
+    (match List.nth_error xs n with
+     | Some v => v
+     | None => JSON.JNull
+     end) = nth_default JSON.JNull xs n.
+Proof.
+  intros xs; induction xs as [|x xs IH]; intros [|n]; simpl; auto.
+Qed.
+
+(* A simple nth_error->bound lemma (used in proofs) *)
+Lemma nth_error_None_length_le :
+  forall (A:Type) (l:list A) (n:nat),
+    List.nth_error l n = None -> (List.length l <= n)%nat.
+Proof.
+  induction l as [|x xs IH]; intros [|n] H; simpl in *.
+  - apply le_n.
+  - apply le_0_n.
+  - inversion H.
+  - apply le_n_S. eapply IH. exact H.
+Qed.
+
 (* ------------------------------------------------------------ *)
-(* Relational semantics *)
+(* Relational semantics                                         *)
 (* ------------------------------------------------------------ *)
 
 Inductive eval_selector : selector -> JSON.node -> list JSON.node -> Prop :=
@@ -336,7 +373,7 @@ Inductive eval : query -> JSON.value -> list JSON.node -> Prop :=
     eval (Query segs) J results.
 
 (* ------------------------------------------------------------ *)
-(* Regex engine (ASCII) *)
+(* Regex engine (ASCII)                                         *)
 (* ------------------------------------------------------------ *)
 
 Module Regex.
@@ -367,6 +404,39 @@ Fixpoint deriv (a:ascii) (r:regex) : regex :=
   | RStar r1 => RCat (deriv a r1) (RStar r1)
   end.
 
+(* Small simplifier to keep derivatives compact *)
+Fixpoint rsimpl (r:regex) : regex :=
+  match r with
+  | RAlt r1 r2 =>
+      let r1' := rsimpl r1 in
+      let r2' := rsimpl r2 in
+      match r1', r2' with
+      | REmpty, _ => r2'
+      | _, REmpty => r1'
+      | _, _      => RAlt r1' r2'
+      end
+  | RCat r1 r2 =>
+      let r1' := rsimpl r1 in
+      let r2' := rsimpl r2 in
+      match r1', r2' with
+      | REmpty, _ => REmpty
+      | _ , REmpty => REmpty
+      | REps , _ => r2'
+      | _ , REps => r1'
+      | _ , _    => RCat r1' r2'
+      end
+  | RStar r1 =>
+      let r1' := rsimpl r1 in
+      match r1' with
+      | REmpty | REps => REps
+      | _ => RStar r1'
+      end
+  | _ => r
+  end.
+
+Definition deriv_simpl (a:ascii) (r:regex) : regex :=
+  rsimpl (deriv a r).
+
 Fixpoint list_of_string (s:string) : list ascii :=
   match s with
   | EmptyString => []
@@ -376,7 +446,7 @@ Fixpoint list_of_string (s:string) : list ascii :=
 Fixpoint matches_from (r:regex) (cs:list ascii) : bool :=
   match cs with
   | [] => nullable r
-  | a::cs' => matches_from (deriv a r) cs'
+  | a::cs' => matches_from (deriv_simpl a r) cs'
   end.
 
 Definition regex_match (r:regex) (s:string) : bool :=
@@ -389,7 +459,7 @@ Definition regex_search (r:regex) (s:string) : bool :=
 End Regex.
 
 (* ------------------------------------------------------------ *)
-(* Executable semantics (complete filters) *)
+(* Executable semantics (complete filters)                      *)
 (* ------------------------------------------------------------ *)
 
 Module Exec.
@@ -637,7 +707,6 @@ End Exec.
 
 (* ------------------------------------------------------------ *)
 (* A conservative static typing/checking module (no proofs)     *)
-(* This accepts a safe subset to avoid obvious dynamic failures *)
 (* ------------------------------------------------------------ *)
 Module Typing.
 Import JSON JSONPath.
@@ -708,9 +777,8 @@ Fixpoint wf_fexpr (f:fexpr) : bool :=
 
 End Typing.
 
-
 (* ------------------------------------------------------------ *)
-(* Bridge lemma: selector -> Child [selector] *)
+(* Bridge lemma: selector -> Child [selector]                   *)
 (* ------------------------------------------------------------ *)
 
 Lemma eval_child_single_selector :
@@ -726,7 +794,7 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
-(* Tests *)
+(* Tests (original set retained)                                *)
 (* ------------------------------------------------------------ *)
 
 Import Exec.
@@ -1075,7 +1143,7 @@ Example exec_filter_on_scalar_yields_empty :
 Proof. reflexivity. Qed.
 
 (* ------------------------------------------------------------ *)
-(* Out-of-bounds contradiction lemma (unchanged) *)
+(* Out-of-bounds contradiction lemma (unchanged)                *)
 (* ------------------------------------------------------------ *)
 
 Lemma eval_selector_index_success_out_of_bounds_contradiction :
@@ -1095,7 +1163,7 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
-(* Extraction *)
+(* Extraction (at the very end)                                 *)
 (* ------------------------------------------------------------ *)
 
 Require Extraction.
@@ -1193,11 +1261,13 @@ Definition dept_sales : JSON.value :=
   JObject [("name", JStr "Sales");
            ("employees", JArr [emp_dave; emp_erin])].
 
+
 (* --- Whole document --- *)
 Definition company_json : JSON.value :=
   JObject [("company", JStr "Acme");
            ("departments", JArr [dept_research; dept_sales]);
            ("meta", JObject [("version", JStr "1.0"); ("rev", JQ 7)])].
+
 
 (*************************************************************)
 (* Query 1: Select employees who (age>30) AND (>=2 tags) AND  *)
@@ -1323,3 +1393,349 @@ Example exec_naturalistic_name_lex_lt_c :
     ([SName "departments"; SIndex 0; SName "employees"; SIndex 1; SName "name"], JStr "bob")
   ].
 Proof. reflexivity. Qed.
+
+(* ---------- Extra small sanity tests ---------- *)
+
+Example exec_desc_includes_self_immediate :
+  let j := JObject [("name", JStr "top"); ("child", JObject [("name", JStr "kid")])] in
+  eval_exec (Query [Desc [SelName "name"]]) j
+  = [ ([SName "name"], JStr "top");
+      ([SName "child"; SName "name"], JStr "kid") ].
+Proof. reflexivity. Qed.
+
+Example exec_slice_neg_step_bounds :
+  let j := JArr [JQ 0; JQ 1; JQ 2; JQ 3; JQ 4] in
+  eval_exec (Query [Child [SelSlice (Some 4) (Some 1) (-2)]]) j
+  = [ ([SIndex 4], JQ 4) ; ([SIndex 2], JQ 2) ].
+Proof. reflexivity. Qed.
+
+Example exec_avalue_multi_hit_fails :
+  let j := JObject [("a", JQ 1); ("b", JQ 2)] in
+  Exec.holds_b (FCmp CEq (AValue (Query [Child [SelWildcard]])) (APrim (PNum (Q_of_Z 1))))
+               ([], j) = false.
+Proof. reflexivity. Qed.
+
+Example typing_requires_string_for_search :
+  Typing.wf_fexpr (FSearch (APrim (PNum (Q_of_Z 3))) (RChr "3"%char)) = false.
+Proof. reflexivity. Qed.
+
+(* --- Hyper-naturalistic Acme dataset --- *)
+Definition acme_db_json : JSON.value :=
+  JObject [
+    ("company", JStr "Acme Inc.");
+    ("hq", JObject [
+       ("address1", JStr "500 Market St");
+       ("city", JStr "San Francisco");
+       ("state", JStr "CA");
+       ("postal_code", JStr "94105");
+       ("country", JStr "US")
+    ]);
+    ("contacts", JObject [
+       ("support", JStr "support@acme.com");
+       ("sales",   JStr "sales@acme.com");
+       ("status",  JStr "green");
+       ("phone",   JStr "+1-415-555-0000")
+    ]);
+    ("offices", JArr [
+       JObject [("code", JStr "SFO"); ("timezone", JStr "America/Los_Angeles"); ("lead", JStr "carol")];
+       JObject [("code", JStr "NYC"); ("timezone", JStr "America/New_York");   ("lead", JStr "dave")];
+       JObject [("code", JStr "BER"); ("timezone", JStr "Europe/Berlin");      ("lead", JStr "heidi")]
+    ]);
+    ("departments", JArr [
+      (* -------- Research -------- *)
+      JObject [
+        ("id",          JStr "R&D");
+        ("name",        JStr "Research");
+        ("cost_center", JStr "1001");
+        ("budget_usd",  JQ 12000000);
+        ("employees",   JArr [
+          JObject [
+            ("id",        JStr "u-alice");
+            ("name",      JStr "alice");
+            ("age",       JQ 34);
+            ("email",     JStr "alice@acme.com");
+            ("phone",     JStr "+1-415-555-1010");
+            ("hire_date", JStr "2018-03-12");
+            ("tags",      JArr [JStr "ml"; JStr "backend"]);
+            ("bio",       JStr "senior ml engineer");
+            ("projects",  JArr [
+              JObject [
+                ("id",     JStr "phoenix-a");
+                ("name",   JStr "phoenix");
+                ("stars",  JQ 50);
+                ("labels", JArr [JStr "ml"; JStr "vision"]);
+                ("status", JStr "active");
+                ("repo",   JStr "git@github.com:acme/phoenix");
+                ("started",JStr "2019-09-01");
+                ("metrics", JObject [
+                  ("prs_open",     JQ 7);
+                  ("issues_open",  JQ 42);
+                  ("coverage_pct", JQ 87)
+                ])
+              ];
+              JObject [
+                ("id",     JStr "drake-a");
+                ("name",   JStr "drake");
+                ("stars",  JQ 20);
+                ("labels", JArr [JStr "infra"]);
+                ("status", JStr "archived");
+                ("repo",   JStr "git@github.com:acme/drake");
+                ("started",JStr "2017-05-22");
+                ("metrics", JObject [
+                  ("prs_open",     JQ 0);
+                  ("issues_open",  JQ 3);
+                  ("coverage_pct", JQ 74)
+                ])
+              ]
+            ])
+          ];
+          JObject [
+            ("id",        JStr "u-bob");
+            ("name",      JStr "bob");
+            ("age",       JQ 29);
+            ("email",     JStr "bob@acme.org");
+            ("phone",     JStr "+1-415-555-1011");
+            ("hire_date", JStr "2020-07-01");
+            ("tags",      JArr [JStr "frontend"]);
+            ("bio",       JStr "ui");
+            ("projects",  JArr [])
+          ];
+          JObject [
+            ("id",        JStr "u-carol");
+            ("name",      JStr "carol");
+            ("age",       JQ 41);
+            ("email",     JStr "carol@acme.com");
+            ("phone",     JStr "+1-415-555-1012");
+            ("hire_date", JStr "2013-11-05");
+            ("tags",      JArr [JStr "ml"; JStr "nlp"; JStr "research"]);
+            ("bio",       JStr "nlp specialist");
+            ("projects",  JArr [
+              JObject [
+                ("id",     JStr "phoenix-c");
+                ("name",   JStr "phoenix");
+                ("stars",  JQ 70);
+                ("labels", JArr [JStr "ml"; JStr "nlp"]);
+                ("status", JStr "active");
+                ("repo",   JStr "git@github.com:acme/phoenix");
+                ("started",JStr "2021-02-10");
+                ("metrics", JObject [
+                  ("prs_open",     JQ 12);
+                  ("issues_open",  JQ 13);
+                  ("coverage_pct", JQ 90)
+                ])
+              ];
+              JObject [
+                ("id",     JStr "eagle-c");
+                ("name",   JStr "eagle");
+                ("stars",  JQ 15);
+                ("labels", JArr [JStr "infra"]);
+                ("status", JStr "active");
+                ("repo",   JStr "git@github.com:acme/eagle");
+                ("started",JStr "2020-10-18");
+                ("metrics", JObject [
+                  ("prs_open",     JQ 3);
+                  ("issues_open",  JQ 5);
+                  ("coverage_pct", JQ 81)
+                ])
+              ]
+            ])
+          ]
+        ])
+      ];
+      (* -------- Engineering -------- *)
+      JObject [
+        ("id",          JStr "ENG");
+        ("name",        JStr "Engineering");
+        ("cost_center", JStr "1002");
+        ("budget_usd",  JQ 30000000);
+        ("employees",   JArr [
+          JObject [
+            ("id",        JStr "u-trent");
+            ("name",      JStr "trent");
+            ("age",       JQ 37);
+            ("email",     JStr "trent@acme.com");
+            ("phone",     JStr "+1-212-555-2001");
+            ("hire_date", JStr "2016-04-09");
+            ("tags",      JArr [JStr "platform"; JStr "sre"]);
+            ("bio",       JStr "platform lead");
+            ("projects",  JArr [
+              JObject [
+                ("id",     JStr "titan");
+                ("name",   JStr "titan");
+                ("stars",  JQ 33);
+                ("labels", JArr [JStr "platform"; JStr "k8s"]);
+                ("status", JStr "active");
+                ("repo",   JStr "git@github.com:acme/titan");
+                ("started",JStr "2019-01-15");
+                ("metrics", JObject [
+                  ("prs_open",     JQ 9);
+                  ("issues_open",  JQ 21);
+                  ("coverage_pct", JQ 84)
+                ])
+              ]
+            ])
+          ];
+          JObject [
+            ("id",        JStr "u-grace");
+            ("name",      JStr "grace");
+            ("age",       JQ 31);
+            ("email",     JStr "grace@acme.com");
+            ("phone",     JStr "+1-212-555-2002");
+            ("hire_date", JStr "2019-08-23");
+            ("tags",      JArr [JStr "backend"; JStr "api"]);
+            ("bio",       JStr "senior backend engineer");
+            ("projects",  JArr [
+              JObject [
+                ("id",     JStr "atlas");
+                ("name",   JStr "atlas");
+                ("stars",  JQ 28);
+                ("labels", JArr [JStr "api"]);
+                ("status", JStr "active");
+                ("repo",   JStr "git@github.com:acme/atlas");
+                ("started",JStr "2022-04-01");
+                ("metrics", JObject [
+                  ("prs_open",     JQ 5);
+                  ("issues_open",  JQ 8);
+                  ("coverage_pct", JQ 88)
+                ])
+              ]
+            ])
+          ];
+          JObject [
+            ("id",        JStr "u-heidi");
+            ("name",      JStr "heidi");
+            ("age",       JQ 27);
+            ("email",     JStr "heidi@acme.com");
+            ("phone",     JStr "+49-30-555-3003");
+            ("hire_date", JStr "2023-03-01");
+            ("tags",      JArr [JStr "frontend"; JStr "design"]);
+            ("bio",       JStr "product designer");
+            ("projects",  JArr [])
+          ]
+        ])
+      ];
+      (* -------- Sales -------- *)
+      JObject [
+        ("id",          JStr "SALES");
+        ("name",        JStr "Sales");
+        ("cost_center", JStr "2001");
+        ("budget_usd",  JQ 9000000);
+        ("employees",   JArr [
+          JObject [
+            ("id",        JStr "u-dave");
+            ("name",      JStr "dave");
+            ("age",       JQ 33);
+            ("email",     JStr "dave@acme.com");
+            ("phone",     JStr "+1-646-555-4001");
+            ("hire_date", JStr "2017-06-30");
+            ("tags",      JArr [JStr "sales"; JStr "lead"]);
+            ("bio",       JStr "account exec");
+            ("projects",  JArr [
+              JObject [
+                ("id",     JStr "crm-d");
+                ("name",   JStr "crm");
+                ("stars",  JQ 8);
+                ("labels", JArr [JStr "sales"]);
+                ("status", JStr "active");
+                ("repo",   JStr "git@github.com:acme/crm");
+                ("started",JStr "2016-07-15");
+                ("metrics", JObject [
+                  ("prs_open",     JQ 1);
+                  ("issues_open",  JQ 2);
+                  ("coverage_pct", JQ 63)
+                ])
+              ]
+            ])
+          ];
+          JObject [
+            ("id",        JStr "u-erin");
+            ("name",      JStr "erin");
+            ("age",       JQ 22);
+            ("email",     JStr "erin@acme.com");
+            ("phone",     JStr "+1-646-555-4002");
+            ("hire_date", JStr "2025-06-01");
+            ("tags",      JArr [JStr "intern"]);
+            ("bio",       JStr "summer intern");
+            ("projects",  JArr [])
+          ]
+        ])
+      ];
+      (* -------- People Ops (HR) -------- *)
+      JObject [
+        ("id",          JStr "HR");
+        ("name",        JStr "People Ops");
+        ("cost_center", JStr "3001");
+        ("budget_usd",  JQ 4000000);
+        ("employees",   JArr [
+          JObject [
+            ("id",        JStr "u-peggy");
+            ("name",      JStr "peggy");
+            ("age",       JQ 39);
+            ("email",     JStr "peggy@acme.com");
+            ("phone",     JStr "+1-415-555-5005");
+            ("hire_date", JStr "2015-09-09");
+            ("tags",      JArr [JStr "hr"; JStr "benefits"]);
+            ("bio",       JStr "benefits manager");
+            ("projects",  JArr [])
+          ]
+        ])
+      ]
+    ]);
+    ("products", JArr [
+      JObject [("sku", JStr "PX-100"); ("name", JStr "Phoenix"); ("status", JStr "GA");   ("owners", JArr [JStr "alice"; JStr "carol"]); ("stars", JQ 120)];
+      JObject [("sku", JStr "DR-200"); ("name", JStr "Drake");   ("status", JStr "EOL");  ("owners", JArr [JStr "alice"]);               ("stars", JQ 40)];
+      JObject [("sku", JStr "TT-300"); ("name", JStr "Titan");   ("status", JStr "Beta"); ("owners", JArr [JStr "trent"; JStr "grace"]); ("stars", JQ 33)]
+    ]);
+    ("audit", JObject [
+       ("generated_by", JStr "acme/exporter/2.1.7");
+       ("exported_at",  JStr "2025-08-16T12:34:56Z");
+       ("row_count",    JQ 23);
+       ("checksum",     JStr "sha256:4f2d0a8b...deadbeef")
+    ]);
+    ("meta", JObject [("version", JStr "2025.08"); ("rev", JQ 42)])
+  ].
+
+(************************************************************)
+(*                    OCaml Extraction                      *)
+(************************************************************)
+
+From Coq Require Import Extraction.
+Require Import Coq.extraction.ExtrOcamlBasic.
+Require Import Coq.extraction.ExtrOcamlString.
+Require Import Coq.extraction.ExtrOcamlZBigInt.
+
+(* Avoid awkward qualified names in the generated code *)
+Extraction Blacklist String List Int Z.
+
+(* Use OCaml as target *)
+Extraction Language OCaml.
+
+(* Inline a few tiny helpers for tighter, faster code *)
+Extraction Inline
+  string_eqb ascii_eqb ascii_ltb ascii_leb
+  Qeqb Qltb Qleb
+  Exec.child_on_node_impl Exec.seg_exec_impl Exec.segs_exec_impl
+  Regex.nullable Regex.deriv Regex.rsimpl Regex.deriv_simpl
+  Regex.list_of_string Regex.matches_from.
+
+(* Produce a single file with a stable, useful API surface *)
+Extraction "jsonpath_exec.ml"
+  (* JSON core *)
+  JSON.value JSON.step JSON.path JSON.node
+
+  (* JSONPath AST *)
+  JSONPath.prim JSONPath.cmp JSONPath.regex
+  JSONPath.aexpr JSONPath.fexpr JSONPath.selector
+  JSONPath.segment JSONPath.query JSONPath.q_segs
+
+  (* Regex API (optional, if you want to call it directly) *)
+  Regex.regex_match Regex.regex_search
+
+  (* Executable entry points *)
+  Exec.eval_exec          (* full engine with filters *)
+  Exec.eval_exec_nf       (* filter-free engine, deterministic *)
+  Exec.visit_df_node      (* document-order DFS enumerator *)
+
+  (* Datasets *)
+  company_json
+  acme_db_json.
