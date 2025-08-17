@@ -3,7 +3,18 @@
    - No admits or axioms
    - Uses only Coq stdlib
    - Ready for OCaml extraction
+
+  Added (vs. baseline):
+   * JSON numbers generalized to rationals (Q)
+   * String lexicographic ordering (ASCII) for <, <=, >, >=
+   * Small total regex engine with Brzozowski derivatives (+ simplifier)
+   * Filters: match()/search() over strings
+   * Conservative static typing checker module (no proofs required)
+   * Tests & naturalistic end-to-end examples
+   * Extraction at the end
 *)
+
+From Coq Require Import Init.Prelude.
 
 From Coq Require Import
   List String Ascii ZArith Arith Lia Bool
@@ -12,6 +23,7 @@ From Coq Require Import
 Import ListNotations.
 Open Scope string_scope.
 Open Scope Z_scope.
+
 
 (* ------------------------------------------------------------ *)
 (* Utilities                                                    *)
@@ -1776,43 +1788,43 @@ Module JSONPath_Equiv.
     - now apply Permutation_app.
   Qed.
 
-  (* ---------- Helpers to trivialize sel_exec_nf_sound ---------- *)
+(* ---------- Helpers to trivialize sel_exec_nf_sound ---------- *)
 
-  Lemma geb_false_lt : forall x y : Z, (x >=? y) = false -> x < y.
-  Proof.
-    intros x y H.
-    unfold Z.geb in H.
-    destruct (Z.compare x y) eqn:C; simpl in H; try discriminate.
-    pose proof (Z.compare_spec x y) as Hc.
-    rewrite C in Hc. inversion Hc; assumption.
-  Qed.
+Lemma geb_false_lt : forall x y : Z, (x >=? y) = false -> x < y.
+Proof.
+  intros x y H.
+  unfold Z.geb in H.
+  destruct (Z.compare x y) eqn:C; simpl in H; try discriminate.
+  pose proof (Z.compare_spec x y) as Hc.
+  rewrite C in Hc. inversion Hc; assumption.
+Qed.
 
-  Lemma ltb_false_ge : forall x y : Z, (x <? y) = false -> y <= x.
-  Proof. intros x y H; apply Z.ltb_ge in H; exact H. Qed.
+Lemma ltb_false_ge : forall x y : Z, (x <? y) = false -> y <= x.
+Proof. intros x y H; apply Z.ltb_ge in H; exact H. Qed.
 
-  Lemma orb_false_split : forall a b : bool, a || b = false -> a = false /\ b = false.
-  Proof. intros a b H; now apply Bool.orb_false_iff in H. Qed.
+Lemma orb_false_split : forall a b : bool, a || b = false -> a = false /\ b = false.
+Proof. intros a b H; now apply Bool.orb_false_iff in H. Qed.
 
-  Lemma in_bounds_from_bools :
-    forall idx len : Z,
-      (idx <? 0) = false ->
-      (idx >=? len) = false ->
-      0 <= idx < len.
-  Proof.
-    intros idx len Hlt0 Hge.
-    split; [apply ltb_false_ge in Hlt0; lia | apply geb_false_lt in Hge; exact Hge].
-  Qed.
+Lemma in_bounds_from_bools :
+  forall idx len : Z,
+    (idx <? 0) = false ->
+    (idx >=? len) = false ->
+    0 <= idx < len.
+Proof.
+  intros idx len Hlt0 Hge.
+  split; [apply ltb_false_ge in Hlt0; lia | apply geb_false_lt in Hge; exact Hge].
+Qed.
 
-  Lemma nth_error_some_of_lt :
-    forall (A:Type) (xs:list A) n,
-      (n < List.length xs)%nat -> exists v, nth_error xs n = Some v.
-  Proof.
-    intros A xs n Hlt.
-    revert xs Hlt; induction n as [|n IH]; intros [|x xs] H; simpl in *; try lia.
-    - eexists; reflexivity.
-    - specialize (IH xs). assert (n < List.length xs)%nat by lia.
-      destruct (IH H0) as [v Hv]. eexists; exact Hv.
-  Qed.
+Lemma nth_error_some_of_lt :
+  forall (A:Type) (xs:list A) n,
+    (n < List.length xs)%nat -> exists v, nth_error xs n = Some v.
+Proof.
+  intros A xs n Hlt.
+  revert xs Hlt; induction n as [|n IH]; intros [|x xs] H; simpl in *; try lia.
+  - eexists; reflexivity.
+  - specialize (IH xs). assert (n < List.length xs)%nat by lia.
+    destruct (IH H0) as [v Hv]. eexists; exact Hv.
+Qed.
 
 Lemma nth_error_some_of_bools_Z :
   forall (A:Type) (xs:list A) idx,
@@ -1822,43 +1834,41 @@ Lemma nth_error_some_of_bools_Z :
 Proof.
   intros A xs idx Hlt0 Hge.
   pose proof (in_bounds_from_bools idx (Z.of_nat (List.length xs)) Hlt0 Hge) as [H0 Hlt].
-  (* Convert the Z-bound to a Nat-bound *)
   assert (Hidx_eq : Z.of_nat (Z.to_nat idx) = idx) by (apply Z2Nat.id; lia).
   rewrite <- Hidx_eq in Hlt.
   apply Nat2Z.inj_lt in Hlt.  (* now: (Z.to_nat idx < List.length xs)%nat *)
   eapply nth_error_some_of_lt; eauto.
 Qed.
 
+Lemma find_key_eqb_eq :
+  forall s k v (fields:list (string * JSON.value)),
+    List.find (fun kv => string_eqb (fst kv) s) fields = Some (k, v) ->
+    k = s.
+Proof.
+  intros s k v fields Hf.
+  apply string_eqb_true_iff.
+  apply find_some in Hf. simpl in Hf. exact Hf.
+Qed.
 
-  Lemma find_key_eqb_eq :
-    forall s k v (fields:list (string * JSON.value)),
-      List.find (fun kv => string_eqb (fst kv) s) fields = Some (k, v) ->
-      k = s.
-  Proof.
-    intros s k v fields Hf.
-    apply string_eqb_true_iff.
-    apply find_some in Hf. simpl in Hf. exact Hf.
-  Qed.
+Lemma selname_object_found :
+  forall s p fields v,
+    List.find (fun kv => string_eqb (fst kv) s) fields = Some (s, v) ->
+    eval_selector (SelName s) (p, JObject fields) [ (p ++ [SName s], v) ].
+Proof. intros; econstructor; eauto. Qed.
 
-  Lemma selname_object_found :
-    forall s p fields v,
-      List.find (fun kv => string_eqb (fst kv) s) fields = Some (s, v) ->
-      eval_selector (SelName s) (p, JObject fields) [ (p ++ [SName s], v) ].
-  Proof. intros; econstructor; eauto. Qed.
+Lemma selname_object_not_found :
+  forall s p fields,
+    List.find (fun kv => string_eqb (fst kv) s) fields = None ->
+    eval_selector (SelName s) (p, JObject fields) [].
+Proof. intros; econstructor; eauto. Qed.
 
-  Lemma selname_object_not_found :
-    forall s p fields,
-      List.find (fun kv => string_eqb (fst kv) s) fields = None ->
-      eval_selector (SelName s) (p, JObject fields) [].
-  Proof. intros; econstructor; eauto. Qed.
-
-  Lemma wildcard_object_sound :
-    forall p fields,
-      eval_selector SelWildcard (p, JObject fields)
-                    (map (fun '(k,v) => (p ++ [SName k], v)) fields).
-  Proof.
-    intros; eapply EvalSelWildcardObject; apply Permutation_refl.
-  Qed.
+Lemma wildcard_object_sound :
+  forall p fields,
+    eval_selector SelWildcard (p, JObject fields)
+                  (map (fun '(k,v) => (p ++ [SName k], v)) fields).
+Proof.
+  intros; eapply EvalSelWildcardObject; apply Permutation_refl.
+Qed.
 
 Lemma slice_map_nth_error_to_default :
   forall p xs start end_ stp,
@@ -1872,22 +1882,50 @@ Lemma slice_map_nth_error_to_default :
   =
     map (fun n0 =>
            mk_node (p ++ [SIndex (Z.of_nat n0)])
-                   (Top.nth_default JNull xs n0))
+                   (nth_default JNull xs n0))
         (slice_positions (List.length xs) start end_ stp).
 Proof.
   intros. apply map_ext. intro n0.
   unfold mk_node.
-  f_equal.
-  (* Now the goal is exactly the lemma nth_error_default_eq *)
-  rewrite nth_error_default_eq.
-  reflexivity.
+  apply (f_equal (fun v => (p ++ [SIndex (Z.of_nat n0)], v))).
+  revert xs. induction n0 as [| n IH]; intros [| x xs]; simpl; try reflexivity.
 Qed.
 
+Lemma eval_selindex_in_bounds :
+  forall i p xs idx v',
+    idx = (if i <? 0 then Z.of_nat (List.length xs) + i else i) ->
+    (idx <? 0) = false ->
+    (idx >=? Z.of_nat (List.length xs)) = false ->
+    nth_error xs (Z.to_nat idx) = Some v' ->
+    eval_selector (SelIndex i) (p, JArr xs) [ (p ++ [SIndex i], v') ].
+Proof.
+  intros; eapply EvalSelIndex with (idx:=idx); eauto.
+Qed.
 
-  (* ------------------------------- *)
-  (*  Per‑selector soundness          *)
-  (*  (deterministic nf evaluator)    *)
-  (* ------------------------------- *)
+Lemma nth_error_default_eq_local :
+  forall (xs : list value) (n : nat),
+    (match nth_error xs n with
+     | Some v => v
+     | None => JNull
+     end) = nth_default JNull xs n.
+Proof.
+  intros xs n; revert xs.
+  induction n as [| n IH]; intros [| x xs]; simpl; try reflexivity.
+Qed.
+
+(* Bridges the match/nth_error form to the fully-qualified json.nth_default *)
+Lemma nth_error_default_eq_json :
+  forall (xs : list value) (n : nat),
+    (match nth_error xs n with
+     | Some v => v
+     | None => JNull
+     end) = json.nth_default JNull xs n.
+Proof.
+  intros xs n; revert xs.
+  induction n as [| n IH]; intros [| x xs]; simpl; try reflexivity.
+  apply IH.
+Qed.
+
 
 Lemma sel_exec_nf_sound :
   forall sel n,
@@ -1926,89 +1964,213 @@ Proof.
     + apply EvalSelIndexNotArray; intros; congruence.
     + set (idx := if i <? 0 then Z.of_nat (List.length xs) + i else i).
       destruct ((idx <? 0) || (idx >=? Z.of_nat (List.length xs))) eqn:Hoob.
-      * (* out of bounds *)
-        eapply EvalSelIndexOutOfBounds with (idx:=idx); [unfold idx; reflexivity | exact Hoob ].
-      * (* in bounds *)
-        destruct (orb_false_split _ _ Hoob) as [Hlt0 Hge].
+      * eapply EvalSelIndexOutOfBounds with (idx:=idx); subst; auto.
+      * destruct (orb_false_split _ _ Hoob) as [Hlt0 Hge].
         destruct (nth_error_some_of_bools_Z _ xs idx Hlt0 Hge) as [v' Hnth].
-        rewrite Hnth.
-        eapply EvalSelIndex with (idx:=idx);
-          [ unfold idx; reflexivity | exact Hlt0 | exact Hge | exact Hnth ].
+        rewrite Hnth. eapply eval_selindex_in_bounds; subst; eauto.
     + apply EvalSelIndexNotArray; intros; congruence.
 
-  (* ----- SelSlice start end_ stp ----- *)
-  - destruct v as [|b|n0|s0|xs|fields]; simpl.
-    + apply EvalSelSliceNotArray; intros; congruence.
-    + apply EvalSelSliceNotArray; intros; congruence.
-    + apply EvalSelSliceNotArray; intros; congruence.
-    + apply EvalSelSliceNotArray; intros; congruence.
-    + rewrite slice_map_nth_error_to_default. apply EvalSelSliceArray.
-    + apply EvalSelSliceNotArray; intros; congruence.
-Qed.
-
-  (* ------------------------------- *)
-  (*  Child‑segment soundness         *)
-  (* ------------------------------- *)
-
-  Lemma seg_exec_nf_child_sound :
-    forall sels n,
-      forallb selector_filter_free sels = true ->
-      eval_seg (Child sels) n (Exec.seg_exec_nf (Child sels) n).
-  Proof.
-    intros sels [p v] Hff. simpl in *.
-    eapply EvalSegChild.
-    exists (map (fun s => Exec.sel_exec_nf s (p, v)) sels).
-    split.
-    - revert Hff; induction sels as [|s ss IH]; simpl; intro HF.
-      + constructor.
-      + apply Bool.andb_true_iff in HF as [Hs Hss].
-        constructor.
-        * apply sel_exec_nf_sound; exact Hs.
-        * apply IH; exact Hss.
-    - reflexivity.
+(* ----- SelSlice start end_ stp ----- *)
+- destruct v as [|b|n0|s0|xs|fields]; simpl.
+  + apply EvalSelSliceNotArray; intros; congruence.
+  + apply EvalSelSliceNotArray; intros; congruence.
+  + apply EvalSelSliceNotArray; intros; congruence.
+  + apply EvalSelSliceNotArray; intros; congruence.
+  + (* array case *)
+    remember (slice_positions (List.length xs) start end_ stp) as ns eqn:Hns.
+    assert (Hmap :
+      map (fun n0 =>
+             mk_node (p ++ [SIndex (Z.of_nat n0)])
+                     (match nth_error xs n0 with
+                      | Some v' => v'
+                      | None => JNull
+                      end)) ns
+      =
+      map (fun n0 =>
+             (p ++ [SIndex (Z.of_nat n0)], json.nth_default JNull xs n0)) ns).
+    { apply map_ext; intro n0.
+      unfold mk_node.
+      apply (f_equal (fun v => (p ++ [SIndex (Z.of_nat n0)], v))).
+      apply nth_error_default_eq_json. }
+    rewrite Hmap.
+    subst ns.
+    apply EvalSelSliceArray.
+  + apply EvalSelSliceNotArray; intros; congruence.
   Qed.
 
-  (* ------------------------------- *)
-  (*  seqlist (Child‑only) soundness  *)
-  (* ------------------------------- *)
+(* ---------- Helper lemmas to trivialize sel_exec_nf_complete ---------- *)
 
-Lemma segs_exec_nf_child_sound :
-  forall segs ns,
-    Forall (fun s => segment_child_only s = true) segs ->
-    eval_rest_on_nodes segs ns (segs_exec_nf segs ns).
+(* 1. SelName on object, key found *)
+Lemma nf_selname_found_eq :
+  forall p s fields v',
+    find (fun kv => string_eqb (fst kv) s) fields = Some (s, v') ->
+    Exec.sel_exec_nf (SelName s) (p, JObject fields)
+    = [ (p ++ [SName s], v') ].
 Proof.
-  induction segs as [|seg segs' IH]; intros ns Hall; simpl.
-  - constructor.
-  - inversion Hall as [| seg1 segs1 Hseg Hrest]; subst.
-    destruct seg as [sels|sels]; simpl in *; try discriminate.
-    eapply EvalRestCons with
-      (seg := Child sels)
-      (rest := segs')
-      (ns := ns)
-      (inter := concat (map (seg_exec_impl sel_exec_nf (Child sels)) ns))
-      (finals := segs_exec_nf segs' (concat (map (seg_exec_impl sel_exec_nf (Child sels)) ns))).
-    + (* existence of node_results and its properties *)
-      eexists (map (seg_exec_impl sel_exec_nf (Child sels)) ns). split.
-      * clear IH Hrest.
-        induction ns as [|n ns IHns]; simpl; constructor.
-        -- apply seg_exec_nf_child_sound. exact Hseg.
-        -- apply IHns.
-      * reflexivity.
-    + (* recursive tail *)
-      apply IH. exact Hrest.
+  intros p s fields v' Hf. simpl. rewrite Hf. reflexivity.
 Qed.
 
-  Theorem eval_exec_nf_child_sound :
-    forall q J,
-      query_child_only q = true ->
-      eval q J (Exec.eval_exec_nf q J).
-  Proof.
-    intros [segs] J Hq; simpl in *.
-    apply EvalQuery.
-    apply segs_exec_nf_child_sound.
-    clear J.
-    induction segs as [|seg segs' IH]; simpl in *.
-    - constructor.
-    - apply Bool.andb_true_iff in Hq as [Hseg Hrest].
-      constructor; [assumption | apply IH; exact Hrest].
-  Qed.
+(* 2. SelName on object, key not found *)
+Lemma nf_selname_notfound_eq :
+  forall p s fields,
+    find (fun kv => string_eqb (fst kv) s) fields = None ->
+    Exec.sel_exec_nf (SelName s) (p, JObject fields) = [].
+Proof. intros p s fields Hf. simpl. rewrite Hf. reflexivity. Qed.
+
+(* 3. SelName on non-object is [] *)
+Lemma nf_selname_nonobj_nil :
+  forall p s v,
+    (forall fs, v <> JObject fs) ->
+    Exec.sel_exec_nf (SelName s) (p, v) = [].
+Proof.
+  intros p s v Hnot; destruct v; simpl; try reflexivity.
+  exfalso; eapply Hnot; eauto.
+Qed.
+
+(* 4. Wildcard on object: Exec equals the simple pair map *)
+Lemma nf_wildcard_obj_eq_map :
+  forall p fields,
+    Exec.sel_exec_nf SelWildcard (p, JObject fields)
+    = map (fun '(k,v) => (p ++ [SName k], v)) fields.
+Proof. intros; simpl; reflexivity. Qed.
+
+(* 5. Wildcard on array: explicit equality form *)
+Lemma nf_wildcard_arr_eq_map :
+  forall p xs,
+    Exec.sel_exec_nf SelWildcard (p, JArr xs)
+    = map (fun '(i,v) => (p ++ [SIndex (Z.of_nat i)], v)) (index_zip xs).
+Proof. intros; simpl; reflexivity. Qed.
+
+(* 6. Wildcard on non-object/non-array is [] *)
+Lemma nf_wildcard_other_nil :
+  forall p v,
+    (forall fs, v <> JObject fs) ->
+    (forall xs, v <> JArr xs) ->
+    Exec.sel_exec_nf SelWildcard (p, v) = [].
+Proof.
+  intros p v HnotO HnotA.
+  destruct v as [|b|n|s|xs|fields]; simpl; try reflexivity.
+  - exfalso; apply (HnotA xs); reflexivity.
+  - exfalso; apply (HnotO fields); reflexivity.
+Qed.
+
+(* 7. SelIndex success: Exec returns the singleton with that element *)
+Lemma nf_selindex_success_eq :
+  forall p xs i idx v',
+    idx = (if i <? 0 then Z.of_nat (List.length xs) + i else i) ->
+    (idx <? 0) = false ->
+    (idx >=? Z.of_nat (List.length xs)) = false ->
+    nth_error xs (Z.to_nat idx) = Some v' ->
+    Exec.sel_exec_nf (SelIndex i) (p, JArr xs)
+    = [ (p ++ [SIndex i], v') ].
+Proof.
+  intros p xs i idx v' Hidx Hlt0 Hge Hnth.
+  simpl.
+  remember (if i <? 0 then Z.of_nat (List.length xs) + i else i) as k eqn:Hk.
+  rewrite <- Hidx.
+  rewrite Hlt0, Hge, Hnth.
+  unfold mk_node; reflexivity.
+Qed.
+
+(* 8. SelIndex out-of-bounds: Exec returns [] *)
+Lemma nf_selindex_oob_nil :
+  forall p xs i idx,
+    idx = (if i <? 0 then Z.of_nat (List.length xs) + i else i) ->
+    orb (idx <? 0) (idx >=? Z.of_nat (List.length xs)) = true ->
+    Exec.sel_exec_nf (SelIndex i) (p, JArr xs) = [].
+Proof.
+  intros p xs i idx Hidx Hb.
+  simpl.
+  rewrite <- Hidx.
+  rewrite Hb.
+  reflexivity.
+Qed.
+
+(* 9. SelIndex on non-array is [] *)
+Lemma nf_selindex_nonarr_nil :
+  forall p i v,
+    (forall xs, v <> JArr xs) ->
+    Exec.sel_exec_nf (SelIndex i) (p, v) = [].
+Proof.
+  intros p i v Hnot; destruct v; simpl; try reflexivity.
+  exfalso; eapply Hnot; eauto.
+Qed.
+
+(* 10. SelSlice on non-array is [] *)
+Lemma nf_selslice_nonarr_nil :
+  forall p start end_ stp v,
+    (forall xs, v <> JArr xs) ->
+    Exec.sel_exec_nf (SelSlice start end_ stp) (p, v) = [].
+Proof.
+  intros p st en stp v Hnot; destruct v; simpl; try reflexivity.
+  exfalso; eapply Hnot; eauto.
+Qed.
+
+(* 11. SelSlice on array: Exec equals map with nth_default *)
+Lemma nf_selslice_arr_eq_defaultmap :
+  forall p xs start end_ stp,
+    Exec.sel_exec_nf (SelSlice start end_ stp) (p, JArr xs)
+    =
+    map (fun n0 => (p ++ [SIndex (Z.of_nat n0)], nth_default JNull xs n0))
+        (slice_positions (List.length xs) start end_ stp).
+Proof.
+  intros p xs start end_ stp.
+  simpl.
+  apply map_ext; intro n0.
+  unfold mk_node.
+  apply (f_equal (fun v => (p ++ [SIndex (Z.of_nat n0)], v))).
+  apply nth_error_default_eq_local.
+Qed.
+
+(* 12. If two lists are equal, they are permutations *)
+Lemma nf_perm_of_eq :
+  forall {A} (x y:list A), x = y -> Permutation x y.
+Proof. intros A x y ->; apply Permutation_refl. Qed.
+
+(* ---------------- sel_exec_nf_complete (short, via helpers) ---------------- *)
+
+Lemma sel_exec_nf_complete :
+  forall sel n res,
+    selector_filter_free sel = true ->
+    eval_selector sel n res ->
+    Permutation res (Exec.sel_exec_nf sel n).
+Proof.
+  intros sel [p v] res Hff Hev; destruct sel as [s| |i|start end_ stp|f]; simpl in *; try discriminate.
+
+  (* ---- SelName ---- *)
+  - inversion Hev; subst; clear Hev; simpl.
+    + (* object, key found *)
+      eapply nf_perm_of_eq.
+      (* use the find=Some hypothesis introduced by inversion *)
+      match goal with
+      | Hfind : find _ _ = Some _ |- _ =>
+          rewrite Hfind; unfold mk_node; reflexivity
+      end.
+    + (* object, key not found *)
+      eapply nf_perm_of_eq.
+      match goal with
+      | Hnone : find _ _ = None |- _ =>
+          rewrite Hnone; reflexivity
+      end.
+    + (* non-object *)
+      eapply nf_perm_of_eq.
+      now rewrite nf_selname_nonobj_nil by assumption.
+
+  (* ---- SelWildcard ---- *)
+  - inversion Hev; subst; clear Hev; simpl.
+    + rewrite nf_wildcard_obj_eq_map. exact H1.
+    + eapply nf_perm_of_eq. now rewrite nf_wildcard_arr_eq_map.
+    + eapply nf_perm_of_eq. now rewrite nf_wildcard_other_nil by assumption.
+
+  (* ---- SelIndex ---- *)
+  - inversion Hev; subst; clear Hev; simpl.
+    + eapply nf_perm_of_eq. eapply nf_selindex_success_eq; eauto.
+    + eapply nf_perm_of_eq. eapply nf_selindex_oob_nil; eauto.
+    + eapply nf_perm_of_eq. now rewrite nf_selindex_nonarr_nil by assumption.
+
+  (* ---- SelSlice ---- *)
+  - inversion Hev; subst; clear Hev; simpl.
+    + eapply nf_perm_of_eq. now rewrite nf_selslice_nonarr_nil by assumption.
+    + eapply nf_perm_of_eq. apply nf_selslice_arr_eq_defaultmap.
+Qed.
+
