@@ -3,15 +3,6 @@
    - No admits or axioms
    - Uses only Coq stdlib
    - Ready for OCaml extraction
-
-  Added (vs. baseline):
-   * JSON numbers generalized to rationals (Q)
-   * String lexicographic ordering (ASCII) for <, <=, >, >=
-   * Small total regex engine with Brzozowski derivatives (+ simplifier)
-   * Filters: match()/search() over strings
-   * Conservative static typing checker module (no proofs required)
-   * Tests & naturalistic end-to-end examples
-   * Extraction at the end
 *)
 
 From Coq Require Import
@@ -1725,3 +1716,299 @@ Extraction "jsonpath_exec.ml"
   (* Datasets *)
   company_json
   acme_db_json.
+  
+(* ============================================================ *)
+(* Equivalence theorems for the filter‑free child‑only core     *)
+(* (no SelFilter; segments are Child only)                      *)
+(* ============================================================ *)
+
+From Coq Require Import List Bool Lia ZArith.
+From Coq Require Import Sorting.Permutation.
+Import ListNotations.
+
+Module JSONPath_Equiv.
+  Import JSON JSONPath Exec.
+
+  Local Open Scope Z_scope.
+
+  (* ------------------------------- *)
+  (*  Syntactic fragments            *)
+  (* ------------------------------- *)
+
+  Definition selector_filter_free (s:selector) : bool :=
+    match s with
+    | SelFilter _ => false
+    | _ => true
+    end.
+
+  Definition segment_child_only (seg:segment) : bool :=
+    match seg with
+    | Child sels => forallb selector_filter_free sels
+    | Desc _     => false
+    end.
+
+  Definition query_child_only (q:query) : bool :=
+    match q with
+    | Query segs => forallb segment_child_only segs
+    end.
+
+  (* ------------------------------- *)
+  (*  Utilities                      *)
+  (* ------------------------------- *)
+
+  Lemma find_some :
+    forall (A:Type) (f:A->bool) (l:list A) (x:A),
+      List.find f l = Some x -> f x = true.
+  Proof.
+    intros A f l x H. induction l as [|y ys IH]; simpl in *; try discriminate.
+    destruct (f y) eqn:Hy.
+    - inversion H; subst; assumption.
+    - apply IH; assumption.
+  Qed.
+
+  Lemma Permutation_concat_pointwise :
+    forall (A:Type) (xss yss:list (list A)),
+      Forall2 (@Permutation A) xss yss ->
+      Permutation (List.concat xss) (List.concat yss).
+  Proof.
+    intros A xss yss H. induction H; simpl.
+    - constructor.
+    - now apply Permutation_app.
+  Qed.
+
+  (* ---------- Helpers to trivialize sel_exec_nf_sound ---------- *)
+
+  Lemma geb_false_lt : forall x y : Z, (x >=? y) = false -> x < y.
+  Proof.
+    intros x y H.
+    unfold Z.geb in H.
+    destruct (Z.compare x y) eqn:C; simpl in H; try discriminate.
+    pose proof (Z.compare_spec x y) as Hc.
+    rewrite C in Hc. inversion Hc; assumption.
+  Qed.
+
+  Lemma ltb_false_ge : forall x y : Z, (x <? y) = false -> y <= x.
+  Proof. intros x y H; apply Z.ltb_ge in H; exact H. Qed.
+
+  Lemma orb_false_split : forall a b : bool, a || b = false -> a = false /\ b = false.
+  Proof. intros a b H; now apply Bool.orb_false_iff in H. Qed.
+
+  Lemma in_bounds_from_bools :
+    forall idx len : Z,
+      (idx <? 0) = false ->
+      (idx >=? len) = false ->
+      0 <= idx < len.
+  Proof.
+    intros idx len Hlt0 Hge.
+    split; [apply ltb_false_ge in Hlt0; lia | apply geb_false_lt in Hge; exact Hge].
+  Qed.
+
+  Lemma nth_error_some_of_lt :
+    forall (A:Type) (xs:list A) n,
+      (n < List.length xs)%nat -> exists v, nth_error xs n = Some v.
+  Proof.
+    intros A xs n Hlt.
+    revert xs Hlt; induction n as [|n IH]; intros [|x xs] H; simpl in *; try lia.
+    - eexists; reflexivity.
+    - specialize (IH xs). assert (n < List.length xs)%nat by lia.
+      destruct (IH H0) as [v Hv]. eexists; exact Hv.
+  Qed.
+
+Lemma nth_error_some_of_bools_Z :
+  forall (A:Type) (xs:list A) idx,
+    (idx <? 0) = false ->
+    (idx >=? Z.of_nat (List.length xs)) = false ->
+    exists v, nth_error xs (Z.to_nat idx) = Some v.
+Proof.
+  intros A xs idx Hlt0 Hge.
+  pose proof (in_bounds_from_bools idx (Z.of_nat (List.length xs)) Hlt0 Hge) as [H0 Hlt].
+  (* Convert the Z-bound to a Nat-bound *)
+  assert (Hidx_eq : Z.of_nat (Z.to_nat idx) = idx) by (apply Z2Nat.id; lia).
+  rewrite <- Hidx_eq in Hlt.
+  apply Nat2Z.inj_lt in Hlt.  (* now: (Z.to_nat idx < List.length xs)%nat *)
+  eapply nth_error_some_of_lt; eauto.
+Qed.
+
+
+  Lemma find_key_eqb_eq :
+    forall s k v (fields:list (string * JSON.value)),
+      List.find (fun kv => string_eqb (fst kv) s) fields = Some (k, v) ->
+      k = s.
+  Proof.
+    intros s k v fields Hf.
+    apply string_eqb_true_iff.
+    apply find_some in Hf. simpl in Hf. exact Hf.
+  Qed.
+
+  Lemma selname_object_found :
+    forall s p fields v,
+      List.find (fun kv => string_eqb (fst kv) s) fields = Some (s, v) ->
+      eval_selector (SelName s) (p, JObject fields) [ (p ++ [SName s], v) ].
+  Proof. intros; econstructor; eauto. Qed.
+
+  Lemma selname_object_not_found :
+    forall s p fields,
+      List.find (fun kv => string_eqb (fst kv) s) fields = None ->
+      eval_selector (SelName s) (p, JObject fields) [].
+  Proof. intros; econstructor; eauto. Qed.
+
+  Lemma wildcard_object_sound :
+    forall p fields,
+      eval_selector SelWildcard (p, JObject fields)
+                    (map (fun '(k,v) => (p ++ [SName k], v)) fields).
+  Proof.
+    intros; eapply EvalSelWildcardObject; apply Permutation_refl.
+  Qed.
+
+Lemma slice_map_nth_error_to_default :
+  forall p xs start end_ stp,
+    map (fun n0 =>
+           mk_node (p ++ [SIndex (Z.of_nat n0)])
+                   (match nth_error xs n0 with
+                    | Some v' => v'
+                    | None => JNull
+                    end))
+        (slice_positions (List.length xs) start end_ stp)
+  =
+    map (fun n0 =>
+           mk_node (p ++ [SIndex (Z.of_nat n0)])
+                   (Top.nth_default JNull xs n0))
+        (slice_positions (List.length xs) start end_ stp).
+Proof.
+  intros. apply map_ext. intro n0.
+  unfold mk_node.
+  f_equal.
+  (* Now the goal is exactly the lemma nth_error_default_eq *)
+  rewrite nth_error_default_eq.
+  reflexivity.
+Qed.
+
+
+  (* ------------------------------- *)
+  (*  Per‑selector soundness          *)
+  (*  (deterministic nf evaluator)    *)
+  (* ------------------------------- *)
+
+Lemma sel_exec_nf_sound :
+  forall sel n,
+    selector_filter_free sel = true ->
+    eval_selector sel n (Exec.sel_exec_nf sel n).
+Proof.
+  intros sel [p v] Hff; destruct sel as [s| |i|start end_ stp|f]; simpl in *; try discriminate; clear Hff.
+
+  (* ----- SelName s ----- *)
+  - destruct v as [|b|n0|s0|xs|fields]; simpl.
+    + apply EvalSelNameNotObject; intros; congruence.
+    + apply EvalSelNameNotObject; intros; congruence.
+    + apply EvalSelNameNotObject; intros; congruence.
+    + apply EvalSelNameNotObject; intros; congruence.
+    + apply EvalSelNameNotObject; intros; congruence.
+    + destruct (List.find (fun kv : string * value => string_eqb (fst kv) s) fields)
+        as [[k v']|] eqn:Hf.
+      * pose proof (find_key_eqb_eq s k v' fields Hf) as ->.
+        now apply selname_object_found.
+      * now apply selname_object_not_found.
+
+  (* ----- SelWildcard ----- *)
+  - destruct v as [|b|n0|s0|xs|fields]; simpl.
+    + eapply EvalSelWildcardOther; intros; congruence.
+    + eapply EvalSelWildcardOther; intros; congruence.
+    + eapply EvalSelWildcardOther; intros; congruence.
+    + eapply EvalSelWildcardOther; intros; congruence.
+    + apply EvalSelWildcardArray.
+    + now apply wildcard_object_sound.
+
+  (* ----- SelIndex i ----- *)
+  - destruct v as [|b|n0|s0|xs|fields]; simpl.
+    + apply EvalSelIndexNotArray; intros; congruence.
+    + apply EvalSelIndexNotArray; intros; congruence.
+    + apply EvalSelIndexNotArray; intros; congruence.
+    + apply EvalSelIndexNotArray; intros; congruence.
+    + set (idx := if i <? 0 then Z.of_nat (List.length xs) + i else i).
+      destruct ((idx <? 0) || (idx >=? Z.of_nat (List.length xs))) eqn:Hoob.
+      * (* out of bounds *)
+        eapply EvalSelIndexOutOfBounds with (idx:=idx); [unfold idx; reflexivity | exact Hoob ].
+      * (* in bounds *)
+        destruct (orb_false_split _ _ Hoob) as [Hlt0 Hge].
+        destruct (nth_error_some_of_bools_Z _ xs idx Hlt0 Hge) as [v' Hnth].
+        rewrite Hnth.
+        eapply EvalSelIndex with (idx:=idx);
+          [ unfold idx; reflexivity | exact Hlt0 | exact Hge | exact Hnth ].
+    + apply EvalSelIndexNotArray; intros; congruence.
+
+  (* ----- SelSlice start end_ stp ----- *)
+  - destruct v as [|b|n0|s0|xs|fields]; simpl.
+    + apply EvalSelSliceNotArray; intros; congruence.
+    + apply EvalSelSliceNotArray; intros; congruence.
+    + apply EvalSelSliceNotArray; intros; congruence.
+    + apply EvalSelSliceNotArray; intros; congruence.
+    + rewrite slice_map_nth_error_to_default. apply EvalSelSliceArray.
+    + apply EvalSelSliceNotArray; intros; congruence.
+Qed.
+
+  (* ------------------------------- *)
+  (*  Child‑segment soundness         *)
+  (* ------------------------------- *)
+
+  Lemma seg_exec_nf_child_sound :
+    forall sels n,
+      forallb selector_filter_free sels = true ->
+      eval_seg (Child sels) n (Exec.seg_exec_nf (Child sels) n).
+  Proof.
+    intros sels [p v] Hff. simpl in *.
+    eapply EvalSegChild.
+    exists (map (fun s => Exec.sel_exec_nf s (p, v)) sels).
+    split.
+    - revert Hff; induction sels as [|s ss IH]; simpl; intro HF.
+      + constructor.
+      + apply Bool.andb_true_iff in HF as [Hs Hss].
+        constructor.
+        * apply sel_exec_nf_sound; exact Hs.
+        * apply IH; exact Hss.
+    - reflexivity.
+  Qed.
+
+  (* ------------------------------- *)
+  (*  seqlist (Child‑only) soundness  *)
+  (* ------------------------------- *)
+
+Lemma segs_exec_nf_child_sound :
+  forall segs ns,
+    Forall (fun s => segment_child_only s = true) segs ->
+    eval_rest_on_nodes segs ns (segs_exec_nf segs ns).
+Proof.
+  induction segs as [|seg segs' IH]; intros ns Hall; simpl.
+  - constructor.
+  - inversion Hall as [| seg1 segs1 Hseg Hrest]; subst.
+    destruct seg as [sels|sels]; simpl in *; try discriminate.
+    eapply EvalRestCons with
+      (seg := Child sels)
+      (rest := segs')
+      (ns := ns)
+      (inter := concat (map (seg_exec_impl sel_exec_nf (Child sels)) ns))
+      (finals := segs_exec_nf segs' (concat (map (seg_exec_impl sel_exec_nf (Child sels)) ns))).
+    + (* existence of node_results and its properties *)
+      eexists (map (seg_exec_impl sel_exec_nf (Child sels)) ns). split.
+      * clear IH Hrest.
+        induction ns as [|n ns IHns]; simpl; constructor.
+        -- apply seg_exec_nf_child_sound. exact Hseg.
+        -- apply IHns.
+      * reflexivity.
+    + (* recursive tail *)
+      apply IH. exact Hrest.
+Qed.
+
+  Theorem eval_exec_nf_child_sound :
+    forall q J,
+      query_child_only q = true ->
+      eval q J (Exec.eval_exec_nf q J).
+  Proof.
+    intros [segs] J Hq; simpl in *.
+    apply EvalQuery.
+    apply segs_exec_nf_child_sound.
+    clear J.
+    induction segs as [|seg segs' IH]; simpl in *.
+    - constructor.
+    - apply Bool.andb_true_iff in Hq as [Hseg Hrest].
+      constructor; [assumption | apply IH; exact Hrest].
+  Qed.
