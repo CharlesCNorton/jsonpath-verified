@@ -3,15 +3,6 @@
    - No admits or axioms
    - Uses only Coq stdlib
    - Ready for OCaml extraction
-
-  Added (vs. baseline):
-   * JSON numbers generalized to rationals (Q)
-   * String lexicographic ordering (ASCII) for <, <=, >, >=
-   * Small total regex engine with Brzozowski derivatives (+ simplifier)
-   * Filters: match()/search() over strings
-   * Conservative static typing checker module (no proofs required)
-   * Tests & naturalistic end-to-end examples
-   * Extraction at the end
 *)
 
 From Coq Require Import Init.Prelude.
@@ -2154,23 +2145,77 @@ Proof.
       end.
     + (* non-object *)
       eapply nf_perm_of_eq.
-      now rewrite nf_selname_nonobj_nil by assumption.
+      destruct v as [|b|n|s0|xs|fs0]; simpl; try reflexivity.
+      (* v = JObject fs0 contradicts the hypothesis from EvalSelNameNotObject *)
+      exfalso; apply (H3 fs0); reflexivity.
 
   (* ---- SelWildcard ---- *)
   - inversion Hev; subst; clear Hev; simpl.
-    + rewrite nf_wildcard_obj_eq_map. exact H1.
-    + eapply nf_perm_of_eq. now rewrite nf_wildcard_arr_eq_map.
-    + eapply nf_perm_of_eq. now rewrite nf_wildcard_other_nil by assumption.
+    + (* object *)
+      (* RHS currently uses mk_node; convert it to plain pairs to match H1 *)
+      change (map (fun '(k, v') => mk_node (p ++ [SName k]) v') fields)
+        with (map (fun '(k, v') => (p ++ [SName k], v')) fields).
+      exact H1.
+    + (* array *)
+      change (map (fun '(i, v') => mk_node (p ++ [SIndex (Z.of_nat i)]) v')
+                  (index_zip xs))
+        with (map (fun '(i, v') => (p ++ [SIndex (Z.of_nat i)], v'))
+                  (index_zip xs)).
+      apply Permutation_refl.
+    + (* other (scalar) *)
+      destruct v as [| b | n | s0 | xs | fields]; simpl;
+        try apply Permutation_refl;
+        try (exfalso; apply (H2 xs); reflexivity);
+        try (exfalso; apply (H1 fields); reflexivity).
 
   (* ---- SelIndex ---- *)
   - inversion Hev; subst; clear Hev; simpl.
-    + eapply nf_perm_of_eq. eapply nf_selindex_success_eq; eauto.
-    + eapply nf_perm_of_eq. eapply nf_selindex_oob_nil; eauto.
-    + eapply nf_perm_of_eq. now rewrite nf_selindex_nonarr_nil by assumption.
+
+    + (* success case *)
+      eapply nf_perm_of_eq.
+      symmetry.
+      eapply (nf_selindex_success_eq
+                p xs i
+                (if i <? 0 then Z.of_nat (List.length xs) + i else i)
+                v0); eauto.
+      (* obligations:
+         - idx = ...            : reflexivity
+         - (idx <? 0) = false   : from inversion (eauto)
+         - (idx >=? len) = false: from inversion (eauto)
+         - nth_error ... = Some : from inversion (eauto) *)
+
+    + (* out-of-bounds case *)
+      eapply nf_perm_of_eq.
+      symmetry.
+      eapply (nf_selindex_oob_nil
+                p xs i
+                (if i <? 0 then Z.of_nat (List.length xs) + i else i)); eauto.
+      (* obligations:
+         - idx = ...            : reflexivity
+         - orb (idx<?0) (idx>=?len) = true : from inversion (eauto) *)
+
+    + (* non-array case *)
+      eapply nf_perm_of_eq.
+      destruct v as [| b | n | s0 | xs0 | fields0]; simpl; try reflexivity.
+      (* v = JArr xs0 is impossible by the rule’s premise *)
+      exfalso; apply (H3 xs0); reflexivity.
+
 
   (* ---- SelSlice ---- *)
   - inversion Hev; subst; clear Hev; simpl.
-    + eapply nf_perm_of_eq. now rewrite nf_selslice_nonarr_nil by assumption.
-    + eapply nf_perm_of_eq. apply nf_selslice_arr_eq_defaultmap.
+
+    + (* non-array case from EvalSelSliceNotArray *)
+      eapply nf_perm_of_eq.
+      destruct v as [| b | n | s0 | xs0 | fields0]; simpl; try reflexivity.
+      (* v = JArr xs0 contradicts the rule’s premise *)
+      exfalso; apply (H5 xs0); reflexivity.
+
+    + (* array case from EvalSelSliceArray *)
+      eapply nf_perm_of_eq.
+      apply map_ext; intro n0.
+      unfold mk_node.
+      apply (f_equal (fun v => (p ++ [SIndex (Z.of_nat n0)], v))).
+      symmetry.
+      apply nth_error_default_eq_json.
 Qed.
 
