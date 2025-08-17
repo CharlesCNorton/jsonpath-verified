@@ -1,12 +1,9 @@
 (**
-  JSONPath RFC9535 – relational + executable semantics (Coq)
-   - No admits or axioms
-   - Uses only Coq stdlib
-   - Ready for OCaml extraction
+  JSONPath (RFC 9535): relational and executable semantics in Coq.
+  The development uses only the Coq standard library and supports OCaml extraction.
 *)
 
 From Coq Require Import Init.Prelude.
-
 From Coq Require Import
   List String Ascii ZArith Arith Lia Bool
   Sorting.Permutation QArith QArith_base.
@@ -15,7 +12,6 @@ Import ListNotations.
 Open Scope string_scope.
 Open Scope Z_scope.
 
-
 (* ------------------------------------------------------------ *)
 (* Utilities                                                    *)
 (* ------------------------------------------------------------ *)
@@ -23,7 +19,6 @@ Open Scope Z_scope.
 Definition string_eqb (s1 s2 : string) : bool :=
   if string_dec s1 s2 then true else false.
 
-(* Helpful spec for string_eqb *)
 Lemma string_eqb_true_iff :
   forall s1 s2, string_eqb s1 s2 = true <-> s1 = s2.
 Proof.
@@ -35,11 +30,10 @@ Proof.
   - exfalso; apply Hneq; assumption.
 Qed.
 
-(* zip with indices [0..n-1] *)
 Definition index_zip {A} (xs : list A) : list (nat * A) :=
   combine (seq 0 (List.length xs)) xs.
 
-(* ASCII-based lexicographic order for strings (total) *)
+(* ASCII-based lexicographic order for strings *)
 Definition ascii_eqb (a b:ascii) : bool :=
   if ascii_dec a b then true else false.
 
@@ -88,7 +82,7 @@ Module JSON.
 Inductive value :=
 | JNull
 | JBool (b:bool)
-| JNum (n: Q)              (* generalized to rationals *)
+| JNum (n: Q)
 | JStr (s:string)
 | JArr (xs:list value)
 | JObject (fields: list (string * value)).  (* RFC: member order not stipulated *)
@@ -124,10 +118,10 @@ Definition prim_of_value (v:value) : option prim :=
 
 Inductive cmp := CEq | CNe | CLt | CLe | CGt | CGe.
 
-(* A small regex AST for match/search on strings *)
+(* Minimal regex AST for ASCII strings *)
 Inductive regex :=
-| REmpty   (* ∅ *)
-| REps     (* ε *)
+| REmpty
+| REps
 | RChr (c:ascii)
 | RAny
 | RAlt (r1 r2:regex)
@@ -137,8 +131,8 @@ Inductive regex :=
 Inductive aexpr :=
 | APrim (p:prim)
 | ACount (q:query)
-| AValue (q:query)     (* value-of: defined if q yields exactly one node and it is a primitive *)
-| ALengthV (q:query)   (* length of string/array/object result if exactly one node *)
+| AValue (q:query)
+| ALengthV (q:query)
 with fexpr :=
 | FTrue
 | FNot (f:fexpr)
@@ -146,8 +140,8 @@ with fexpr :=
 | FOr  (f g:fexpr)
 | FExists (q:query)
 | FCmp (op:cmp) (a b:aexpr)
-| FMatch (a:aexpr) (r:regex)   (* full match of string value *)
-| FSearch (a:aexpr) (r:regex)  (* substring search of string value *)
+| FMatch (a:aexpr) (r:regex)   (* full match *)
+| FSearch (a:aexpr) (r:regex)  (* substring search *)
 with selector :=
 | SelName (s:string)
 | SelWildcard
@@ -232,7 +226,6 @@ Fixpoint nth_default (d:JSON.value) (xs:list JSON.value) (n:nat) : JSON.value :=
   | _::xs', S n' => nth_default d xs' n'
   end.
 
-(* Mapping equality used to align nth_error with nth_default *)
 Lemma nth_error_default_eq :
   forall (xs:list JSON.value) n,
     (match List.nth_error xs n with
@@ -241,18 +234,6 @@ Lemma nth_error_default_eq :
      end) = nth_default JSON.JNull xs n.
 Proof.
   intros xs; induction xs as [|x xs IH]; intros [|n]; simpl; auto.
-Qed.
-
-(* A simple nth_error->bound lemma (used in proofs) *)
-Lemma nth_error_None_length_le :
-  forall (A:Type) (l:list A) (n:nat),
-    List.nth_error l n = None -> (List.length l <= n)%nat.
-Proof.
-  induction l as [|x xs IH]; intros [|n] H; simpl in *.
-  - apply le_n.
-  - apply le_0_n.
-  - inversion H.
-  - apply le_n_S. eapply IH. exact H.
 Qed.
 
 (* ------------------------------------------------------------ *)
@@ -398,7 +379,6 @@ Fixpoint deriv (a:ascii) (r:regex) : regex :=
   | RStar r1 => RCat (deriv a r1) (RStar r1)
   end.
 
-(* Small simplifier to keep derivatives compact *)
 Fixpoint rsimpl (r:regex) : regex :=
   match r with
   | RAlt r1 r2 =>
@@ -446,20 +426,20 @@ Fixpoint matches_from (r:regex) (cs:list ascii) : bool :=
 Definition regex_match (r:regex) (s:string) : bool :=
   matches_from r (list_of_string s).
 
-(* search = .* r .*   i.e., substring exists *)
+(* search = .* r .* *)
 Definition regex_search (r:regex) (s:string) : bool :=
   regex_match (RCat (RStar RAny) (RCat r (RStar RAny))) s.
 
 End Regex.
 
 (* ------------------------------------------------------------ *)
-(* Executable semantics (complete filters)                      *)
+(* Executable semantics (filters enabled)                       *)
 (* ------------------------------------------------------------ *)
 
 Module Exec.
 Import JSON JSONPath Regex.
 
-(* ---------- Primitive comparisons ---------- *)
+(* Primitive comparisons *)
 
 Definition prim_eq (p q:prim) : bool :=
   match p, q with
@@ -487,7 +467,7 @@ Definition cmp_prim (op:cmp) (x y:prim) : bool :=
   | CGe => orb (prim_lt y x) (prim_eq x y)
   end.
 
-(* ---------- No-filter selector evaluator (kept) ---------- *)
+(* Selector evaluator without filters *)
 
 Fixpoint sel_exec_nf (sel:selector) (n:JSON.node) : list JSON.node :=
   match n with
@@ -528,7 +508,7 @@ Fixpoint sel_exec_nf (sel:selector) (n:JSON.node) : list JSON.node :=
     end
   end.
 
-(* ---------- Depth-first visit in document order ---------- *)
+(* Document-order DFS visit *)
 
 Fixpoint visit_df_value (p:JSON.path) (v:JSON.value) {struct v} : list JSON.node :=
   match v with
@@ -560,7 +540,7 @@ Fixpoint visit_df_value (p:JSON.path) (v:JSON.value) {struct v} : list JSON.node
 Definition visit_df_node (n:JSON.node) : list JSON.node :=
   let '(p,v) := n in visit_df_value p v.
 
-(* ---------- Generic engine parameterized by selector impl ---------- *)
+(* Generic engine parameterized by a selector implementation *)
 
 Section Engine.
   Variable sel_impl : selector -> JSON.node -> list JSON.node.
@@ -586,13 +566,14 @@ Section Engine.
     segs_exec_impl (q_segs q) [([], J)].
 End Engine.
 
-(* nf-instance engine (ignores filters) *)
+(* nf-instance engine (no filters) *)
 Definition child_on_node_nf := child_on_node_impl sel_exec_nf.
 Definition seg_exec_nf     := seg_exec_impl     sel_exec_nf.
 Definition segs_exec_nf    := segs_exec_impl    sel_exec_nf.
 Definition eval_exec_nf    := eval_exec_impl    sel_exec_nf.
 
-(* ---------- Full semantics: filters (now with regex) may nest ---------- *)
+(* Full engine with filters *)
+
 Fixpoint sel_exec (sel:selector) (n:JSON.node) {struct sel} : list JSON.node :=
   match sel, n with
   | SelFilter f, (p, JObject fields) =>
@@ -609,7 +590,7 @@ Fixpoint sel_exec (sel:selector) (n:JSON.node) {struct sel} : list JSON.node :=
       map (fun '(i,v') => mk_node (List.app p [SIndex (Z.of_nat i)]) v')
           (filter (fun iv => keep iv) (index_zip xs))
 
-  | SelFilter _, (_, _) => []  (* filtering a scalar yields nothing *)
+  | SelFilter _, (_, _) => []
 
   | SelName s, (p, JObject fields) =>
       match find (fun kv => string_eqb (fst kv) s) fields with
@@ -691,7 +672,6 @@ with aeval (a:aexpr) (v:value) {struct a} : option prim :=
       end
   end.
 
-(* Specialized full evaluator *)
 Definition child_on_node := child_on_node_impl sel_exec.
 Definition seg_exec     := seg_exec_impl     sel_exec.
 Definition segs_exec    := segs_exec_impl    sel_exec.
@@ -700,14 +680,14 @@ Definition eval_exec    := eval_exec_impl    sel_exec.
 End Exec.
 
 (* ------------------------------------------------------------ *)
-(* A conservative static typing/checking module (no proofs)     *)
+(* Static well-formedness checks (conservative)                 *)
 (* ------------------------------------------------------------ *)
+
 Module Typing.
 Import JSON JSONPath.
 
 Inductive primty := TNull | TBool | TNum | TStr | TAnyPrim.
 
-(* Helpers for the singleton-query syntactic check *)
 Definition selector_ok (sel:selector) : bool :=
   match sel with
   | SelName _ | SelIndex _ => true
@@ -720,8 +700,7 @@ Definition segment_ok (s:segment) : bool :=
   | Desc _ => false
   end.
 
-(* A very conservative syntactic predicate for "singleton" queries:
-   chains of Child with only SelName/SelIndex (no wildcard/slice/desc/filter). *)
+(* Chains of Child with only SelName/SelIndex *)
 Definition singleton_query (q:query) : bool :=
   match q with
   | Query segs =>
@@ -731,7 +710,6 @@ Definition singleton_query (q:query) : bool :=
       end
   end.
 
-(* Type inference for aexpr (very conservative) *)
 Definition aety (a:aexpr) : primty :=
   match a with
   | APrim PNull      => TNull
@@ -743,7 +721,6 @@ Definition aety (a:aexpr) : primty :=
   | AValue _         => TAnyPrim
   end.
 
-(* Check if two primitive types are “comparable” for FCmp *)
 Definition comparable (t1 t2:primty) : bool :=
   match t1, t2 with
   | TNull, TNull => true
@@ -788,15 +765,14 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
-(* Tests (original set retained)                                *)
+(* Tests                                                        *)
 (* ------------------------------------------------------------ *)
 
 Import Exec.
 
-(* Shorthand for Q-valued JSON numbers *)
 Definition JQ (z:Z) : JSON.value := JSON.JNum (Q_of_Z z).
 
-(* ---------- Basic selectors ---------- *)
+(* Basic selectors *)
 
 Example test_name_selector :
   let json := JObject [("a", JQ 1); ("b", JQ 2)] in
@@ -826,11 +802,7 @@ Proof.
   - eexists. split.
     + constructor.
       * apply eval_child_single_selector.
-        eapply EvalSelIndex with (idx:=1); simpl.
-        { reflexivity. }  (* idx = z *)
-        { reflexivity. }  (* idx <? 0 = false *)
-        { reflexivity. }  (* idx >=? len = false *)
-        { reflexivity. }  (* nth_error ... = Some _ *)
+        eapply EvalSelIndex with (idx:=1); simpl; try reflexivity.
       * constructor.
     + simpl. reflexivity.
   - constructor.
@@ -847,11 +819,7 @@ Proof.
   - eexists. split.
     + constructor.
       * apply eval_child_single_selector.
-        eapply EvalSelIndex with (idx:=2); simpl.
-        { reflexivity. }
-        { reflexivity. }
-        { reflexivity. }
-        { reflexivity. }
+        eapply EvalSelIndex with (idx:=2); simpl; try reflexivity.
       * constructor.
     + simpl. reflexivity.
   - constructor.
@@ -937,7 +905,6 @@ Example test_multi_segment :
 Proof.
   simpl. eexists. split; [| reflexivity].
   apply EvalQuery.
-  (* seg1 *)
   econstructor.
   - eexists. split.
     + constructor.
@@ -945,20 +912,14 @@ Proof.
         apply EvalSelName. reflexivity.
       * constructor.
     + simpl. reflexivity.
-  - (* seg2 *)
-    econstructor.
+  - econstructor.
     + eexists. split.
       * constructor.
         -- apply eval_child_single_selector.
-           eapply EvalSelIndex with (idx:=0); simpl.
-           { reflexivity. }
-           { reflexivity. }
-           { reflexivity. }
-           { reflexivity. }
+           eapply EvalSelIndex with (idx:=0); simpl; try reflexivity.
         -- constructor.
       * simpl. reflexivity.
-    + (* seg3 *)
-      econstructor.
+    + econstructor.
       * eexists. split.
         -- constructor.
            ++ apply eval_child_single_selector.
@@ -972,7 +933,7 @@ Theorem empty_query_returns_root : forall J,
   eval (Query []) J [([], J)].
 Proof. intros. constructor. constructor. Qed.
 
-(* ---------- Slices ---------- *)
+(* Slices *)
 
 Example exec_slice_pos :
   let j := JArr [JQ 0; JQ 1; JQ 2; JQ 3] in
@@ -997,7 +958,7 @@ Example exec_slice_mixed_bounds :
   = [ ([SIndex 2], JQ 2) ; ([SIndex 3], JQ 3) ; ([SIndex 4], JQ 4) ].
 Proof. reflexivity. Qed.
 
-(* ---------- Filters (comparisons / exists / count / length) ---------- *)
+(* Filters *)
 
 Definition f_age_gt_21 : selector :=
   SelFilter (FCmp CGt
@@ -1057,7 +1018,7 @@ Proof. reflexivity. Qed.
 
 Definition f_len_gt_3 : selector :=
   SelFilter (FCmp CGt
-                 (ALengthV (Query []))  (* length of current node value *)
+                 (ALengthV (Query []))
                  (APrim (PNum (Q_of_Z 3)))).
 
 Example exec_filter_length_gt_3_on_array_of_strings :
@@ -1069,7 +1030,7 @@ Example exec_filter_length_gt_3_on_array_of_strings :
     ].
 Proof. reflexivity. Qed.
 
-(* ---------- Descendant semantics ---------- *)
+(* Descendant semantics *)
 
 Example exec_desc_name_at_any_depth :
   let j :=
@@ -1083,7 +1044,7 @@ Example exec_desc_name_at_any_depth :
     ].
 Proof. reflexivity. Qed.
 
-(* ---------- Regex functions: match/search ---------- *)
+(* Regex utilities *)
 
 Definition re_hello : regex :=
   RCat (RChr "h"%char)
@@ -1114,7 +1075,7 @@ Example exec_regex_search_substring :
     ].
 Proof. reflexivity. Qed.
 
-(* ---------- Edge cases ---------- *)
+(* Edge cases *)
 
 Example exec_name_on_non_object :
   let j := JQ 0 in
@@ -1137,7 +1098,7 @@ Example exec_filter_on_scalar_yields_empty :
 Proof. reflexivity. Qed.
 
 (* ------------------------------------------------------------ *)
-(* Out-of-bounds contradiction lemma (unchanged)                *)
+(* Out-of-bounds contradiction lemma                             *)
 (* ------------------------------------------------------------ *)
 
 Lemma eval_selector_index_success_out_of_bounds_contradiction :
@@ -1156,13 +1117,9 @@ Proof.
   - apply Z.geb_le in HgeLen; lia.
 Qed.
 
-(*******************************************************)
-(* A very difficult, naturalistic end-to-end example   *)
-(* exercising RFC9535 features in one real-ish domain. *)
-(*******************************************************)
-
-(* --- Reusable bits --- *)
-Import Exec.
+(*************************************************************)
+(* End-to-end dataset and queries                            *)
+(*************************************************************)
 
 (* Small regexes used in filters *)
 Definition re_at : JSONPath.regex := RChr "@"%char.
@@ -1170,7 +1127,7 @@ Definition re_dotcom : JSONPath.regex :=
   RCat (RChr "."%char)
    (RCat (RChr "c"%char) (RCat (RChr "o"%char) (RChr "m"%char))).
 
-(* --- Projects (as separate constants so expected results are exact) --- *)
+(* Projects *)
 Definition proj_phoenix_a : JSON.value :=
   JObject [("name", JStr "phoenix"); ("stars", JQ 50);
            ("labels", JArr [JStr "ml"; JStr "vision"])].
@@ -1191,7 +1148,7 @@ Definition proj_crm_d : JSON.value :=
   JObject [("name", JStr "crm"); ("stars", JQ 8);
            ("labels", JArr [JStr "sales"])].
 
-(* --- Employees --- *)
+(* Employees *)
 Definition emp_alice : JSON.value :=
   JObject [("name", JStr "alice");
            ("age", JQ 34);
@@ -1232,7 +1189,7 @@ Definition emp_erin : JSON.value :=
            ("bio", JStr "summer intern");
            ("projects", JArr [])].
 
-(* --- Departments --- *)
+(* Departments *)
 Definition dept_research : JSON.value :=
   JObject [("name", JStr "Research");
            ("employees", JArr [emp_alice; emp_bob; emp_carol])].
@@ -1241,20 +1198,13 @@ Definition dept_sales : JSON.value :=
   JObject [("name", JStr "Sales");
            ("employees", JArr [emp_dave; emp_erin])].
 
-
-(* --- Whole document --- *)
+(* Whole document *)
 Definition company_json : JSON.value :=
   JObject [("company", JStr "Acme");
            ("departments", JArr [dept_research; dept_sales]);
            ("meta", JObject [("version", JStr "1.0"); ("rev", JQ 7)])].
 
-
-(*************************************************************)
-(* Query 1: Select employees who (age>30) AND (>=2 tags) AND  *)
-(*          (email contains '@' AND '.com'). Return the whole *)
-(*          employee objects, in document order.              *)
-(*************************************************************)
-
+(* Query 1: filter by age/tags/email *)
 Definition sel_emp_age_tags_emailcom : JSONPath.selector :=
   SelFilter
     (FAnd
@@ -1278,22 +1228,13 @@ Example exec_naturalistic_complex_filter :
     company_json
   =
   [
-    (* Research[0] alice *)
     ([SName "departments"; SIndex 0; SName "employees"; SIndex 0], emp_alice);
-
-    (* Research[2] carol *)
     ([SName "departments"; SIndex 0; SName "employees"; SIndex 2], emp_carol);
-
-    (* Sales[0] dave *)
     ([SName "departments"; SIndex 1; SName "employees"; SIndex 0], emp_dave)
   ].
 Proof. reflexivity. Qed.
 
-(************************************************************************)
-(* Query 2: From every 'projects' array anywhere in the doc, pick the   *)
-(*          last element (negative index) and then return its 'name'.   *)
-(*          Exercises Desc, negative index, and field selection.        *)
-(************************************************************************)
+(* Query 2: last project names at any depth *)
 
 Example exec_naturalistic_last_project_names :
   eval_exec
@@ -1303,24 +1244,16 @@ Example exec_naturalistic_last_project_names :
     company_json
   =
   [
-    (* Research/alice last project = "drake" *)
     ([SName "departments"; SIndex 0; SName "employees"; SIndex 0;
       SName "projects"; SIndex (-1); SName "name"], JStr "drake");
-
-    (* Research/carol last project = "eagle" *)
     ([SName "departments"; SIndex 0; SName "employees"; SIndex 2;
       SName "projects"; SIndex (-1); SName "name"], JStr "eagle");
-
-    (* Sales/dave last project = "crm" *)
     ([SName "departments"; SIndex 1; SName "employees"; SIndex 0;
       SName "projects"; SIndex (-1); SName "name"], JStr "crm")
   ].
 Proof. reflexivity. Qed.
 
-(******************************************************************************)
-(* Query 3: Names of employees who have at least TWO projects with stars>=15. *)
-(*          Uses nested filter and ACount; returns names in document order.   *)
-(******************************************************************************)
+(* Query 3: employees with at least two projects stars>=15 *)
 
 Definition sel_emp_two_big_projects : JSONPath.selector :=
   SelFilter
@@ -1348,10 +1281,7 @@ Example exec_naturalistic_names_of_emp_two_big_projects :
   ].
 Proof. reflexivity. Qed.
 
-(******************************************************************)
-(* Query 4: Lexicographic (ASCII) string comparison sanity check: *)
-(*          pick employee names strictly less than "c".           *)
-(******************************************************************)
+(* Query 4: lexicographic sanity check *)
 
 Definition sel_emp_name_lt_c : JSONPath.selector :=
   SelFilter
@@ -1373,8 +1303,6 @@ Example exec_naturalistic_name_lex_lt_c :
     ([SName "departments"; SIndex 0; SName "employees"; SIndex 1; SName "name"], JStr "bob")
   ].
 Proof. reflexivity. Qed.
-
-(* ---------- Extra small sanity tests ---------- *)
 
 Example exec_desc_includes_self_immediate :
   let j := JObject [("name", JStr "top"); ("child", JObject [("name", JStr "kid")])] in
@@ -1399,7 +1327,8 @@ Example typing_requires_string_for_search :
   Typing.wf_fexpr (FSearch (APrim (PNum (Q_of_Z 3))) (RChr "3"%char)) = false.
 Proof. reflexivity. Qed.
 
-(* --- Hyper-naturalistic Acme dataset --- *)
+(* Extended dataset *)
+
 Definition acme_db_json : JSON.value :=
   JObject [
     ("company", JStr "Acme Inc.");
@@ -1422,7 +1351,6 @@ Definition acme_db_json : JSON.value :=
        JObject [("code", JStr "BER"); ("timezone", JStr "Europe/Berlin");      ("lead", JStr "heidi")]
     ]);
     ("departments", JArr [
-      (* -------- Research -------- *)
       JObject [
         ("id",          JStr "R&D");
         ("name",        JStr "Research");
@@ -1522,7 +1450,6 @@ Definition acme_db_json : JSON.value :=
           ]
         ])
       ];
-      (* -------- Engineering -------- *)
       JObject [
         ("id",          JStr "ENG");
         ("name",        JStr "Engineering");
@@ -1594,7 +1521,6 @@ Definition acme_db_json : JSON.value :=
           ]
         ])
       ];
-      (* -------- Sales -------- *)
       JObject [
         ("id",          JStr "SALES");
         ("name",        JStr "Sales");
@@ -1640,7 +1566,6 @@ Definition acme_db_json : JSON.value :=
           ]
         ])
       ];
-      (* -------- People Ops (HR) -------- *)
       JObject [
         ("id",          JStr "HR");
         ("name",        JStr "People Ops");
@@ -1675,68 +1600,16 @@ Definition acme_db_json : JSON.value :=
     ("meta", JObject [("version", JStr "2025.08"); ("rev", JQ 42)])
   ].
 
-(************************************************************)
-(*                    OCaml Extraction                      *)
-(************************************************************)
-
-From Coq Require Import Extraction.
-Require Import Coq.extraction.ExtrOcamlBasic.
-Require Import Coq.extraction.ExtrOcamlString.
-Require Import Coq.extraction.ExtrOcamlZBigInt.
-
-(* Avoid awkward qualified names in the generated code *)
-Extraction Blacklist String List Int Z.
-
-(* Use OCaml as target *)
-Extraction Language OCaml.
-
-(* Inline a few tiny helpers for tighter, faster code *)
-Extraction Inline
-  string_eqb ascii_eqb ascii_ltb ascii_leb
-  Qeqb Qltb Qleb
-  Exec.child_on_node_impl Exec.seg_exec_impl Exec.segs_exec_impl
-  Regex.nullable Regex.deriv Regex.rsimpl Regex.deriv_simpl
-  Regex.list_of_string Regex.matches_from.
-
-(* Produce a single file with a stable, useful API surface *)
-Extraction "jsonpath_exec.ml"
-  (* JSON core *)
-  JSON.value JSON.step JSON.path JSON.node
-
-  (* JSONPath AST *)
-  JSONPath.prim JSONPath.cmp JSONPath.regex
-  JSONPath.aexpr JSONPath.fexpr JSONPath.selector
-  JSONPath.segment JSONPath.query JSONPath.q_segs
-
-  (* Regex API (optional, if you want to call it directly) *)
-  Regex.regex_match Regex.regex_search
-
-  (* Executable entry points *)
-  Exec.eval_exec          (* full engine with filters *)
-  Exec.eval_exec_nf       (* filter-free engine, deterministic *)
-  Exec.visit_df_node      (* document-order DFS enumerator *)
-
-  (* Datasets *)
-  company_json
-  acme_db_json.
-  
 (* ============================================================ *)
-(* Equivalence theorems for the filter‑free child‑only core     *)
-(* (no SelFilter; segments are Child only)                      *)
+(* Equivalence theorems for the filter‑free, child‑only core    *)
 (* ============================================================ *)
-
-From Coq Require Import List Bool Lia ZArith.
-From Coq Require Import Sorting.Permutation.
-Import ListNotations.
 
 Module JSONPath_Equiv.
   Import JSON JSONPath Exec.
 
   Local Open Scope Z_scope.
 
-  (* ------------------------------- *)
-  (*  Syntactic fragments            *)
-  (* ------------------------------- *)
+  (* Syntactic fragments *)
 
   Definition selector_filter_free (s:selector) : bool :=
     match s with
@@ -1755,9 +1628,7 @@ Module JSONPath_Equiv.
     | Query segs => forallb segment_child_only segs
     end.
 
-  (* ------------------------------- *)
-  (*  Utilities                      *)
-  (* ------------------------------- *)
+  (* Utilities *)
 
   Lemma find_some :
     forall (A:Type) (f:A->bool) (l:list A) (x:A),
@@ -1769,117 +1640,90 @@ Module JSONPath_Equiv.
     - apply IH; assumption.
   Qed.
 
-  Lemma Permutation_concat_pointwise :
-    forall (A:Type) (xss yss:list (list A)),
-      Forall2 (@Permutation A) xss yss ->
-      Permutation (List.concat xss) (List.concat yss).
+  (* Helpers *)
+
+  Lemma geb_false_lt : forall x y : Z, (x >=? y) = false -> x < y.
   Proof.
-    intros A xss yss H. induction H; simpl.
-    - constructor.
-    - now apply Permutation_app.
+    intros x y H.
+    unfold Z.geb in H.
+    destruct (Z.compare x y) eqn:C; simpl in H; try discriminate.
+    pose proof (Z.compare_spec x y) as Hc.
+    rewrite C in Hc. inversion Hc; assumption.
   Qed.
 
-(* ---------- Helpers to trivialize sel_exec_nf_sound ---------- *)
+  Lemma ltb_false_ge : forall x y : Z, (x <? y) = false -> y <= x.
+  Proof. intros x y H; apply Z.ltb_ge in H; exact H. Qed.
 
-Lemma geb_false_lt : forall x y : Z, (x >=? y) = false -> x < y.
-Proof.
-  intros x y H.
-  unfold Z.geb in H.
-  destruct (Z.compare x y) eqn:C; simpl in H; try discriminate.
-  pose proof (Z.compare_spec x y) as Hc.
-  rewrite C in Hc. inversion Hc; assumption.
-Qed.
+  Lemma orb_false_split : forall a b : bool, a || b = false -> a = false /\ b = false.
+  Proof. intros a b H; now apply Bool.orb_false_iff in H. Qed.
 
-Lemma ltb_false_ge : forall x y : Z, (x <? y) = false -> y <= x.
-Proof. intros x y H; apply Z.ltb_ge in H; exact H. Qed.
+  Lemma in_bounds_from_bools :
+    forall idx len : Z,
+      (idx <? 0) = false ->
+      (idx >=? len) = false ->
+      0 <= idx < len.
+  Proof.
+    intros idx len Hlt0 Hge.
+    split; [apply ltb_false_ge in Hlt0; lia | apply geb_false_lt in Hge; exact Hge].
+  Qed.
 
-Lemma orb_false_split : forall a b : bool, a || b = false -> a = false /\ b = false.
-Proof. intros a b H; now apply Bool.orb_false_iff in H. Qed.
+  Lemma nth_error_some_of_lt :
+    forall (A:Type) (xs:list A) n,
+      (n < List.length xs)%nat -> exists v, nth_error xs n = Some v.
+  Proof.
+    intros A xs n Hlt.
+    revert xs Hlt; induction n as [|n IH]; intros [|x xs] H; simpl in *; try lia.
+    - eexists; reflexivity.
+    - specialize (IH xs). assert (n < List.length xs)%nat by lia.
+      destruct (IH H0) as [v Hv]. eexists; exact Hv.
+  Qed.
 
-Lemma in_bounds_from_bools :
-  forall idx len : Z,
-    (idx <? 0) = false ->
-    (idx >=? len) = false ->
-    0 <= idx < len.
-Proof.
-  intros idx len Hlt0 Hge.
-  split; [apply ltb_false_ge in Hlt0; lia | apply geb_false_lt in Hge; exact Hge].
-Qed.
+  Lemma nth_error_some_of_bools_Z :
+    forall (A:Type) (xs:list A) idx,
+      (idx <? 0) = false ->
+      (idx >=? Z.of_nat (List.length xs)) = false ->
+      exists v, nth_error xs (Z.to_nat idx) = Some v.
+  Proof.
+    intros A xs idx Hlt0 Hge.
+    pose proof (in_bounds_from_bools idx (Z.of_nat (List.length xs)) Hlt0 Hge) as [H0 Hlt].
+    assert (Hidx_eq : Z.of_nat (Z.to_nat idx) = idx) by (apply Z2Nat.id; lia).
+    rewrite <- Hidx_eq in Hlt.
+    apply Nat2Z.inj_lt in Hlt.
+    eapply nth_error_some_of_lt; eauto.
+  Qed.
 
-Lemma nth_error_some_of_lt :
-  forall (A:Type) (xs:list A) n,
-    (n < List.length xs)%nat -> exists v, nth_error xs n = Some v.
-Proof.
-  intros A xs n Hlt.
-  revert xs Hlt; induction n as [|n IH]; intros [|x xs] H; simpl in *; try lia.
-  - eexists; reflexivity.
-  - specialize (IH xs). assert (n < List.length xs)%nat by lia.
-    destruct (IH H0) as [v Hv]. eexists; exact Hv.
-Qed.
-
-Lemma nth_error_some_of_bools_Z :
-  forall (A:Type) (xs:list A) idx,
-    (idx <? 0) = false ->
-    (idx >=? Z.of_nat (List.length xs)) = false ->
-    exists v, nth_error xs (Z.to_nat idx) = Some v.
-Proof.
-  intros A xs idx Hlt0 Hge.
-  pose proof (in_bounds_from_bools idx (Z.of_nat (List.length xs)) Hlt0 Hge) as [H0 Hlt].
-  assert (Hidx_eq : Z.of_nat (Z.to_nat idx) = idx) by (apply Z2Nat.id; lia).
-  rewrite <- Hidx_eq in Hlt.
-  apply Nat2Z.inj_lt in Hlt.  (* now: (Z.to_nat idx < List.length xs)%nat *)
-  eapply nth_error_some_of_lt; eauto.
-Qed.
-
-Lemma find_key_eqb_eq :
-  forall s k v (fields:list (string * JSON.value)),
-    List.find (fun kv => string_eqb (fst kv) s) fields = Some (k, v) ->
-    k = s.
-Proof.
-  intros s k v fields Hf.
-  apply string_eqb_true_iff.
-  apply find_some in Hf. simpl in Hf. exact Hf.
-Qed.
+  Lemma find_key_eqb_eq :
+    forall s k v (fields:list (string * JSON.value)),
+      List.find (fun kv => string_eqb (fst kv) s) fields = Some (k, v) ->
+      k = s.
+  Proof.
+    intros s k v fields Hf.
+    apply string_eqb_true_iff.
+    apply find_some in Hf. simpl in Hf. exact Hf.
+  Qed.
 
 Lemma selname_object_found :
   forall s p fields v,
     List.find (fun kv => string_eqb (fst kv) s) fields = Some (s, v) ->
-    eval_selector (SelName s) (p, JObject fields) [ (p ++ [SName s], v) ].
-Proof. intros; econstructor; eauto. Qed.
+    eval_selector (SelName s) (p, JObject fields)
+                  [ (List.app p [SName s], v) ].
+Proof.
+  intros s p fields v Hf.
+  constructor; exact Hf.
+Qed.
 
-Lemma selname_object_not_found :
-  forall s p fields,
-    List.find (fun kv => string_eqb (fst kv) s) fields = None ->
-    eval_selector (SelName s) (p, JObject fields) [].
-Proof. intros; econstructor; eauto. Qed.
+  Lemma selname_object_not_found :
+    forall s p fields,
+      List.find (fun kv => string_eqb (fst kv) s) fields = None ->
+      eval_selector (SelName s) (p, JObject fields) [].
+  Proof. intros; econstructor; eauto. Qed.
 
 Lemma wildcard_object_sound :
   forall p fields,
     eval_selector SelWildcard (p, JObject fields)
-                  (map (fun '(k,v) => (p ++ [SName k], v)) fields).
+      (map (fun '(k,v) => (List.app p [SName k], v)) fields).
 Proof.
-  intros; eapply EvalSelWildcardObject; apply Permutation_refl.
-Qed.
-
-Lemma slice_map_nth_error_to_default :
-  forall p xs start end_ stp,
-    map (fun n0 =>
-           mk_node (p ++ [SIndex (Z.of_nat n0)])
-                   (match nth_error xs n0 with
-                    | Some v' => v'
-                    | None => JNull
-                    end))
-        (slice_positions (List.length xs) start end_ stp)
-  =
-    map (fun n0 =>
-           mk_node (p ++ [SIndex (Z.of_nat n0)])
-                   (nth_default JNull xs n0))
-        (slice_positions (List.length xs) start end_ stp).
-Proof.
-  intros. apply map_ext. intro n0.
-  unfold mk_node.
-  apply (f_equal (fun v => (p ++ [SIndex (Z.of_nat n0)], v))).
-  revert xs. induction n0 as [| n IH]; intros [| x xs]; simpl; try reflexivity.
+  intros. eapply EvalSelWildcardObject. apply Permutation_refl.
 Qed.
 
 Lemma eval_selindex_in_bounds :
@@ -1888,36 +1732,14 @@ Lemma eval_selindex_in_bounds :
     (idx <? 0) = false ->
     (idx >=? Z.of_nat (List.length xs)) = false ->
     nth_error xs (Z.to_nat idx) = Some v' ->
-    eval_selector (SelIndex i) (p, JArr xs) [ (p ++ [SIndex i], v') ].
+    eval_selector (SelIndex i) (p, JArr xs) [ (List.app p [SIndex i], v') ].
 Proof.
-  intros; eapply EvalSelIndex with (idx:=idx); eauto.
-Qed.
-
-Lemma nth_error_default_eq_local :
-  forall (xs : list value) (n : nat),
-    (match nth_error xs n with
-     | Some v => v
-     | None => JNull
-     end) = nth_default JNull xs n.
-Proof.
-  intros xs n; revert xs.
-  induction n as [| n IH]; intros [| x xs]; simpl; try reflexivity.
-Qed.
-
-(* Bridges the match/nth_error form to the fully-qualified json.nth_default *)
-Lemma nth_error_default_eq_json :
-  forall (xs : list value) (n : nat),
-    (match nth_error xs n with
-     | Some v => v
-     | None => JNull
-     end) = json.nth_default JNull xs n.
-Proof.
-  intros xs n; revert xs.
-  induction n as [| n IH]; intros [| x xs]; simpl; try reflexivity.
-  apply IH.
+  intros i p xs idx v' Hidx Hlt0 Hge Hnth.
+  eapply EvalSelIndex with (idx := idx); eauto.
 Qed.
 
 
+(* Soundness of the nf selector interpreter *)
 Lemma sel_exec_nf_sound :
   forall sel n,
     selector_filter_free sel = true ->
@@ -1925,127 +1747,90 @@ Lemma sel_exec_nf_sound :
 Proof.
   intros sel [p v] Hff; destruct sel as [s| |i|start end_ stp|f]; simpl in *; try discriminate; clear Hff.
 
-  (* ----- SelName s ----- *)
-  - destruct v as [|b|n0|s0|xs|fields]; simpl.
-    + apply EvalSelNameNotObject; intros; congruence.
-    + apply EvalSelNameNotObject; intros; congruence.
-    + apply EvalSelNameNotObject; intros; congruence.
-    + apply EvalSelNameNotObject; intros; congruence.
-    + apply EvalSelNameNotObject; intros; congruence.
-    + destruct (List.find (fun kv : string * value => string_eqb (fst kv) s) fields)
-        as [[k v']|] eqn:Hf.
-      * pose proof (find_key_eqb_eq s k v' fields Hf) as ->.
-        now apply selname_object_found.
-      * now apply selname_object_not_found.
+  (* SelName *)
+  - destruct v as [|b|n0|s0|xs|fields]; simpl;
+      try (apply EvalSelNameNotObject; intros; congruence).
+    (* JObject fields case only here *)
+    destruct (List.find (fun kv : string * value => string_eqb (fst kv) s) fields)
+      as [[k v']|] eqn:Hf.
+    + pose proof (find_key_eqb_eq s k v' fields Hf) as ->.
+      now apply selname_object_found.
+    + now apply selname_object_not_found.
 
-  (* ----- SelWildcard ----- *)
+  (* SelWildcard *)
   - destruct v as [|b|n0|s0|xs|fields]; simpl.
-    + eapply EvalSelWildcardOther; intros; congruence.
-    + eapply EvalSelWildcardOther; intros; congruence.
-    + eapply EvalSelWildcardOther; intros; congruence.
-    + eapply EvalSelWildcardOther; intros; congruence.
-    + apply EvalSelWildcardArray.
-    + now apply wildcard_object_sound.
+    + eapply EvalSelWildcardOther; intros; congruence.  (* JNull *)
+    + eapply EvalSelWildcardOther; intros; congruence.  (* JBool *)
+    + eapply EvalSelWildcardOther; intros; congruence.  (* JNum  *)
+    + eapply EvalSelWildcardOther; intros; congruence.  (* JStr  *)
+    + apply EvalSelWildcardArray.                       (* JArr  *)
+    + now apply wildcard_object_sound.                  (* JObject *)
 
-  (* ----- SelIndex i ----- *)
-  - destruct v as [|b|n0|s0|xs|fields]; simpl.
-    + apply EvalSelIndexNotArray; intros; congruence.
-    + apply EvalSelIndexNotArray; intros; congruence.
-    + apply EvalSelIndexNotArray; intros; congruence.
-    + apply EvalSelIndexNotArray; intros; congruence.
-    + set (idx := if i <? 0 then Z.of_nat (List.length xs) + i else i).
-      destruct ((idx <? 0) || (idx >=? Z.of_nat (List.length xs))) eqn:Hoob.
-      * eapply EvalSelIndexOutOfBounds with (idx:=idx); subst; auto.
-      * destruct (orb_false_split _ _ Hoob) as [Hlt0 Hge].
-        destruct (nth_error_some_of_bools_Z _ xs idx Hlt0 Hge) as [v' Hnth].
-        rewrite Hnth. eapply eval_selindex_in_bounds; subst; eauto.
-    + apply EvalSelIndexNotArray; intros; congruence.
+  (* SelIndex *)
+  - destruct v as [|b|n0|s0|xs|fields]; simpl;
+      try (apply EvalSelIndexNotArray; intros; congruence).
+    set (idx := if i <? 0 then Z.of_nat (List.length xs) + i else i).
+    destruct ((idx <? 0) || (idx >=? Z.of_nat (List.length xs))) eqn:Hoob.
+    + eapply EvalSelIndexOutOfBounds with (idx:=idx); subst; auto.
+    + destruct (orb_false_split _ _ Hoob) as [Hlt0 Hge].
+      destruct (nth_error_some_of_bools_Z _ xs idx Hlt0 Hge) as [v' Hnth].
+      rewrite Hnth. eapply eval_selindex_in_bounds; subst; eauto.
 
-(* ----- SelSlice start end_ stp ----- *)
-- destruct v as [|b|n0|s0|xs|fields]; simpl.
-  + apply EvalSelSliceNotArray; intros; congruence.
-  + apply EvalSelSliceNotArray; intros; congruence.
-  + apply EvalSelSliceNotArray; intros; congruence.
-  + apply EvalSelSliceNotArray; intros; congruence.
-  + (* array case *)
+  (* SelSlice *)
+  - destruct v as [|b|n0|s0|xs|fields]; simpl;
+      try (apply EvalSelSliceNotArray; intros; congruence).
     remember (slice_positions (List.length xs) start end_ stp) as ns eqn:Hns.
     assert (Hmap :
       map (fun n0 =>
-             mk_node (p ++ [SIndex (Z.of_nat n0)])
+             mk_node (List.app p [SIndex (Z.of_nat n0)])
                      (match nth_error xs n0 with
                       | Some v' => v'
                       | None => JNull
                       end)) ns
       =
       map (fun n0 =>
-             (p ++ [SIndex (Z.of_nat n0)], json.nth_default JNull xs n0)) ns).
+             mk_node (List.app p [SIndex (Z.of_nat n0)])
+                     (nth_default JNull xs n0)) ns).
     { apply map_ext; intro n0.
       unfold mk_node.
-      apply (f_equal (fun v => (p ++ [SIndex (Z.of_nat n0)], v))).
-      apply nth_error_default_eq_json. }
-    rewrite Hmap.
-    subst ns.
-    apply EvalSelSliceArray.
-  + apply EvalSelSliceNotArray; intros; congruence.
+      apply (f_equal (fun v => (List.app p [SIndex (Z.of_nat n0)], v))).
+      apply nth_error_default_eq. }
+    rewrite Hmap; subst ns; apply EvalSelSliceArray.
+Qed.
+
+
+  (* Auxiliary equalities for completeness *)
+
+  Lemma nf_selname_nonobj_nil :
+    forall p s v,
+      (forall fs, v <> JObject fs) ->
+      Exec.sel_exec_nf (SelName s) (p, v) = [].
+  Proof.
+    intros p s v Hnot; destruct v; simpl; try reflexivity.
+    exfalso; eapply Hnot; eauto.
   Qed.
 
-(* ---------- Helper lemmas to trivialize sel_exec_nf_complete ---------- *)
+  Lemma nf_wildcard_other_nil :
+    forall p v,
+      (forall fs, v <> JObject fs) ->
+      (forall xs, v <> JArr xs) ->
+      Exec.sel_exec_nf SelWildcard (p, v) = [].
+  Proof.
+    intros p v HnotO HnotA.
+    destruct v as [|b|n|s|xs|fields]; simpl; try reflexivity.
+    - exfalso; apply (HnotA xs); reflexivity.
+    - exfalso; apply (HnotO fields); reflexivity.
+  Qed.
 
-(* 1. SelName on object, key found *)
-Lemma nf_selname_found_eq :
-  forall p s fields v',
-    find (fun kv => string_eqb (fst kv) s) fields = Some (s, v') ->
-    Exec.sel_exec_nf (SelName s) (p, JObject fields)
-    = [ (p ++ [SName s], v') ].
-Proof.
-  intros p s fields v' Hf. simpl. rewrite Hf. reflexivity.
-Qed.
+  Lemma nf_selindex_nonarr_nil :
+    forall p i v,
+      (forall xs, v <> JArr xs) ->
+      Exec.sel_exec_nf (SelIndex i) (p, v) = [].
+  Proof.
+    intros p i v Hnot; destruct v; simpl; try reflexivity.
+    exfalso; eapply Hnot; eauto.
+  Qed.
 
-(* 2. SelName on object, key not found *)
-Lemma nf_selname_notfound_eq :
-  forall p s fields,
-    find (fun kv => string_eqb (fst kv) s) fields = None ->
-    Exec.sel_exec_nf (SelName s) (p, JObject fields) = [].
-Proof. intros p s fields Hf. simpl. rewrite Hf. reflexivity. Qed.
-
-(* 3. SelName on non-object is [] *)
-Lemma nf_selname_nonobj_nil :
-  forall p s v,
-    (forall fs, v <> JObject fs) ->
-    Exec.sel_exec_nf (SelName s) (p, v) = [].
-Proof.
-  intros p s v Hnot; destruct v; simpl; try reflexivity.
-  exfalso; eapply Hnot; eauto.
-Qed.
-
-(* 4. Wildcard on object: Exec equals the simple pair map *)
-Lemma nf_wildcard_obj_eq_map :
-  forall p fields,
-    Exec.sel_exec_nf SelWildcard (p, JObject fields)
-    = map (fun '(k,v) => (p ++ [SName k], v)) fields.
-Proof. intros; simpl; reflexivity. Qed.
-
-(* 5. Wildcard on array: explicit equality form *)
-Lemma nf_wildcard_arr_eq_map :
-  forall p xs,
-    Exec.sel_exec_nf SelWildcard (p, JArr xs)
-    = map (fun '(i,v) => (p ++ [SIndex (Z.of_nat i)], v)) (index_zip xs).
-Proof. intros; simpl; reflexivity. Qed.
-
-(* 6. Wildcard on non-object/non-array is [] *)
-Lemma nf_wildcard_other_nil :
-  forall p v,
-    (forall fs, v <> JObject fs) ->
-    (forall xs, v <> JArr xs) ->
-    Exec.sel_exec_nf SelWildcard (p, v) = [].
-Proof.
-  intros p v HnotO HnotA.
-  destruct v as [|b|n|s|xs|fields]; simpl; try reflexivity.
-  - exfalso; apply (HnotA xs); reflexivity.
-  - exfalso; apply (HnotO fields); reflexivity.
-Qed.
-
-(* 7. SelIndex success: Exec returns the singleton with that element *)
 Lemma nf_selindex_success_eq :
   forall p xs i idx v',
     idx = (if i <? 0 then Z.of_nat (List.length xs) + i else i) ->
@@ -2053,73 +1838,59 @@ Lemma nf_selindex_success_eq :
     (idx >=? Z.of_nat (List.length xs)) = false ->
     nth_error xs (Z.to_nat idx) = Some v' ->
     Exec.sel_exec_nf (SelIndex i) (p, JArr xs)
-    = [ (p ++ [SIndex i], v') ].
+    = [ (List.app p [SIndex i], v') ].
 Proof.
   intros p xs i idx v' Hidx Hlt0 Hge Hnth.
   simpl.
-  remember (if i <? 0 then Z.of_nat (List.length xs) + i else i) as k eqn:Hk.
   rewrite <- Hidx.
   rewrite Hlt0, Hge, Hnth.
   unfold mk_node; reflexivity.
 Qed.
 
-(* 8. SelIndex out-of-bounds: Exec returns [] *)
-Lemma nf_selindex_oob_nil :
-  forall p xs i idx,
-    idx = (if i <? 0 then Z.of_nat (List.length xs) + i else i) ->
-    orb (idx <? 0) (idx >=? Z.of_nat (List.length xs)) = true ->
-    Exec.sel_exec_nf (SelIndex i) (p, JArr xs) = [].
-Proof.
-  intros p xs i idx Hidx Hb.
-  simpl.
-  rewrite <- Hidx.
-  rewrite Hb.
-  reflexivity.
-Qed.
 
-(* 9. SelIndex on non-array is [] *)
-Lemma nf_selindex_nonarr_nil :
-  forall p i v,
-    (forall xs, v <> JArr xs) ->
-    Exec.sel_exec_nf (SelIndex i) (p, v) = [].
-Proof.
-  intros p i v Hnot; destruct v; simpl; try reflexivity.
-  exfalso; eapply Hnot; eauto.
-Qed.
+  Lemma nf_selindex_oob_nil :
+    forall p xs i idx,
+      idx = (if i <? 0 then Z.of_nat (List.length xs) + i else i) ->
+      orb (idx <? 0) (idx >=? Z.of_nat (List.length xs)) = true ->
+      Exec.sel_exec_nf (SelIndex i) (p, JArr xs) = [].
+  Proof.
+    intros p xs i idx Hidx Hb.
+    simpl.
+    rewrite <- Hidx.
+    rewrite Hb.
+    reflexivity.
+  Qed.
 
-(* 10. SelSlice on non-array is [] *)
-Lemma nf_selslice_nonarr_nil :
-  forall p start end_ stp v,
-    (forall xs, v <> JArr xs) ->
-    Exec.sel_exec_nf (SelSlice start end_ stp) (p, v) = [].
-Proof.
-  intros p st en stp v Hnot; destruct v; simpl; try reflexivity.
-  exfalso; eapply Hnot; eauto.
-Qed.
+  Lemma nf_selslice_nonarr_nil :
+    forall p start end_ stp v,
+      (forall xs, v <> JArr xs) ->
+      Exec.sel_exec_nf (SelSlice start end_ stp) (p, v) = [].
+  Proof.
+    intros p st en stp v Hnot; destruct v; simpl; try reflexivity.
+    exfalso; eapply Hnot; eauto.
+  Qed.
 
-(* 11. SelSlice on array: Exec equals map with nth_default *)
 Lemma nf_selslice_arr_eq_defaultmap :
   forall p xs start end_ stp,
     Exec.sel_exec_nf (SelSlice start end_ stp) (p, JArr xs)
     =
-    map (fun n0 => (p ++ [SIndex (Z.of_nat n0)], nth_default JNull xs n0))
+    map (fun n0 => (List.app p [SIndex (Z.of_nat n0)], nth_default JNull xs n0))
         (slice_positions (List.length xs) start end_ stp).
 Proof.
   intros p xs start end_ stp.
   simpl.
   apply map_ext; intro n0.
   unfold mk_node.
-  apply (f_equal (fun v => (p ++ [SIndex (Z.of_nat n0)], v))).
-  apply nth_error_default_eq_local.
+  apply (f_equal (fun v => (List.app p [SIndex (Z.of_nat n0)], v))).
+  apply nth_error_default_eq.
 Qed.
 
-(* 12. If two lists are equal, they are permutations *)
-Lemma nf_perm_of_eq :
-  forall {A} (x y:list A), x = y -> Permutation x y.
-Proof. intros A x y ->; apply Permutation_refl. Qed.
 
-(* ---------------- sel_exec_nf_complete (short, via helpers) ---------------- *)
+  Lemma nf_perm_of_eq :
+    forall {A} (x y:list A), x = y -> Permutation x y.
+  Proof. intros A x y ->; apply Permutation_refl. Qed.
 
+(* Completeness of the nf selector interpreter *)
 Lemma sel_exec_nf_complete :
   forall sel n res,
     selector_filter_free sel = true ->
@@ -2128,94 +1899,99 @@ Lemma sel_exec_nf_complete :
 Proof.
   intros sel [p v] res Hff Hev; destruct sel as [s| |i|start end_ stp|f]; simpl in *; try discriminate.
 
-  (* ---- SelName ---- *)
+  (* SelName *)
   - inversion Hev; subst; clear Hev; simpl.
-    + (* object, key found *)
-      eapply nf_perm_of_eq.
-      (* use the find=Some hypothesis introduced by inversion *)
+    + eapply nf_perm_of_eq.
       match goal with
       | Hfind : find _ _ = Some _ |- _ =>
-          rewrite Hfind; unfold mk_node; reflexivity
+          rewrite Hfind; reflexivity
       end.
-    + (* object, key not found *)
-      eapply nf_perm_of_eq.
+    + eapply nf_perm_of_eq.
       match goal with
       | Hnone : find _ _ = None |- _ =>
           rewrite Hnone; reflexivity
       end.
-    + (* non-object *)
-      eapply nf_perm_of_eq.
-      destruct v as [|b|n|s0|xs|fs0]; simpl; try reflexivity.
-      (* v = JObject fs0 contradicts the hypothesis from EvalSelNameNotObject *)
+    + eapply nf_perm_of_eq.
+      destruct v as [|b|n0|s0|xs|fs0]; simpl; try reflexivity.
       exfalso; apply (H3 fs0); reflexivity.
 
-  (* ---- SelWildcard ---- *)
+  (* SelWildcard *)
   - inversion Hev; subst; clear Hev; simpl.
-    + (* object *)
-      (* RHS currently uses mk_node; convert it to plain pairs to match H1 *)
-      change (map (fun '(k, v') => mk_node (p ++ [SName k]) v') fields)
-        with (map (fun '(k, v') => (p ++ [SName k], v')) fields).
-      exact H1.
-    + (* array *)
-      change (map (fun '(i, v') => mk_node (p ++ [SIndex (Z.of_nat i)]) v')
-                  (index_zip xs))
-        with (map (fun '(i, v') => (p ++ [SIndex (Z.of_nat i)], v'))
-                  (index_zip xs)).
-      apply Permutation_refl.
-    + (* other (scalar) *)
-      destruct v as [| b | n | s0 | xs | fields]; simpl;
+    + cbv [mk_node]. exact H1.
+    + cbv [mk_node]. apply Permutation_refl.
+    + destruct v as [| b | n0 | s0 | xs0 | fields0]; simpl;
         try apply Permutation_refl;
-        try (exfalso; apply (H2 xs); reflexivity);
-        try (exfalso; apply (H1 fields); reflexivity).
+        try (exfalso; apply (H2 xs0); reflexivity);
+        try (exfalso; apply (H1 fields0); reflexivity).
 
-  (* ---- SelIndex ---- *)
+  (* SelIndex *)
   - inversion Hev; subst; clear Hev; simpl.
-
-    + (* success case *)
-      eapply nf_perm_of_eq.
+    + eapply nf_perm_of_eq.
       symmetry.
       eapply (nf_selindex_success_eq
                 p xs i
                 (if i <? 0 then Z.of_nat (List.length xs) + i else i)
                 v0); eauto.
-      (* obligations:
-         - idx = ...            : reflexivity
-         - (idx <? 0) = false   : from inversion (eauto)
-         - (idx >=? len) = false: from inversion (eauto)
-         - nth_error ... = Some : from inversion (eauto) *)
-
-    + (* out-of-bounds case *)
-      eapply nf_perm_of_eq.
+    + eapply nf_perm_of_eq.
       symmetry.
       eapply (nf_selindex_oob_nil
                 p xs i
                 (if i <? 0 then Z.of_nat (List.length xs) + i else i)); eauto.
-      (* obligations:
-         - idx = ...            : reflexivity
-         - orb (idx<?0) (idx>=?len) = true : from inversion (eauto) *)
-
-    + (* non-array case *)
-      eapply nf_perm_of_eq.
-      destruct v as [| b | n | s0 | xs0 | fields0]; simpl; try reflexivity.
-      (* v = JArr xs0 is impossible by the rule’s premise *)
+    + eapply nf_perm_of_eq.
+      destruct v as [| b | n0 | s0 | xs0 | fields0]; simpl; try reflexivity.
       exfalso; apply (H3 xs0); reflexivity.
 
-
-  (* ---- SelSlice ---- *)
+  (* SelSlice *)
   - inversion Hev; subst; clear Hev; simpl.
-
-    + (* non-array case from EvalSelSliceNotArray *)
-      eapply nf_perm_of_eq.
-      destruct v as [| b | n | s0 | xs0 | fields0]; simpl; try reflexivity.
-      (* v = JArr xs0 contradicts the rule’s premise *)
+    + eapply nf_perm_of_eq.
+      destruct v as [| b | n0 | s0 | xs0 | fields0]; simpl; try reflexivity.
       exfalso; apply (H5 xs0); reflexivity.
-
-    + (* array case from EvalSelSliceArray *)
-      eapply nf_perm_of_eq.
+    + eapply nf_perm_of_eq.
       apply map_ext; intro n0.
-      unfold mk_node.
-      apply (f_equal (fun v => (p ++ [SIndex (Z.of_nat n0)], v))).
-      symmetry.
-      apply nth_error_default_eq_json.
+      cbv [mk_node].
+      apply (f_equal (fun v0 => (List.app p [SIndex (Z.of_nat n0)], v0))).
+      symmetry. apply nth_error_default_eq.
 Qed.
 
+
+End JSONPath_Equiv.
+
+(* ------------------------------------------------------------ *)
+(* OCaml Extraction                                             *)
+(* ------------------------------------------------------------ *)
+
+From Coq Require Import Extraction.
+Require Import Coq.extraction.ExtrOcamlBasic.
+Require Import Coq.extraction.ExtrOcamlString.
+Require Import Coq.extraction.ExtrOcamlZBigInt.
+
+Extraction Blacklist String List Int Z.
+Extraction Language OCaml.
+
+Extraction Inline
+  string_eqb ascii_eqb ascii_ltb ascii_leb
+  Qeqb Qltb Qleb
+  Exec.child_on_node_impl Exec.seg_exec_impl Exec.segs_exec_impl
+  Regex.nullable Regex.deriv Regex.rsimpl Regex.deriv_simpl
+  Regex.list_of_string Regex.matches_from.
+
+Extraction "jsonpath_exec.ml"
+  (* JSON core *)
+  JSON.value JSON.step JSON.path JSON.node
+
+  (* JSONPath AST *)
+  JSONPath.prim JSONPath.cmp JSONPath.regex
+  JSONPath.aexpr JSONPath.fexpr JSONPath.selector
+  JSONPath.segment JSONPath.query JSONPath.q_segs
+
+  (* Regex API *)
+  Regex.regex_match Regex.regex_search
+
+  (* Executable entry points *)
+  Exec.eval_exec
+  Exec.eval_exec_nf
+  Exec.visit_df_node
+
+  (* Datasets *)
+  company_json
+  acme_db_json.
