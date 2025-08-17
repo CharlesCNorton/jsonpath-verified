@@ -1162,20 +1162,6 @@ Proof.
   - apply Z.geb_le in HgeLen; lia.
 Qed.
 
-(* ------------------------------------------------------------ *)
-(* Extraction (at the very end)                                 *)
-(* ------------------------------------------------------------ *)
-
-Require Extraction.
-Extraction Language OCaml.
-
-Extraction "jsonpath_exec.ml"
-  JSON.value JSON.step JSON.path JSON.node
-  JSONPath.prim JSONPath.cmp JSONPath.regex
-  JSONPath.aexpr JSONPath.fexpr JSONPath.selector
-  JSONPath.segment JSONPath.query JSONPath.q_segs
-  Exec.eval_exec.
-
 (*******************************************************)
 (* A very difficult, naturalistic end-to-end example   *)
 (* exercising RFC9535 features in one real-ish domain. *)
