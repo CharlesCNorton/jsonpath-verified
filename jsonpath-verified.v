@@ -1956,6 +1956,66 @@ Qed.
 
 End JSONPath_Equiv.
 
+Import JSON JSONPath Exec JSONPath_Equiv.
+
+(* 1) Totality: a relational result always exists (it’s the exec result) *)
+Corollary nf_selector_total :
+  forall sel n,
+    selector_filter_free sel = true ->
+    exists res, eval_selector sel n res.
+Proof.
+  intros sel n Hff. eexists. eapply sel_exec_nf_sound; exact Hff.
+Qed.
+
+(* 2) Determinism up to permutation *)
+Corollary nf_selector_deterministic_up_to_perm :
+  forall sel n res1 res2,
+    selector_filter_free sel = true ->
+    eval_selector sel n res1 ->
+    eval_selector sel n res2 ->
+    Permutation res1 res2.
+Proof.
+  intros sel n res1 res2 Hff H1 H2.
+  transitivity (Exec.sel_exec_nf sel n).
+  - eapply sel_exec_nf_complete; eauto.
+  - symmetry; eapply sel_exec_nf_complete; eauto.
+Qed.
+
+(* 3) Membership invariance *)
+Corollary nf_selector_in_iff :
+  forall sel n res x,
+    selector_filter_free sel = true ->
+    eval_selector sel n res ->
+    In x res <-> In x (Exec.sel_exec_nf sel n).
+Proof.
+  intros sel n res x Hff Hev.
+  split.
+  - (* -> *)
+    intro Hin.
+    eapply Permutation_in.
+    + eapply sel_exec_nf_complete; eauto.
+    + exact Hin.
+  - (* <- *)
+    intro Hin.
+    eapply Permutation_in.
+    + apply Permutation_sym.
+      eapply sel_exec_nf_complete; eauto.
+    + exact Hin.
+Qed.
+
+(* 4) Cardinality invariance *)
+Corollary nf_selector_length_eq :
+  forall sel n res,
+    selector_filter_free sel = true ->
+    eval_selector sel n res ->
+    List.length res = List.length (Exec.sel_exec_nf sel n).
+Proof.
+  intros sel n res Hff Hev.
+  eapply Permutation_length.
+  eapply sel_exec_nf_complete; eauto.
+Qed.
+
+
 (* ------------------------------------------------------------ *)
 (* OCaml Extraction                                             *)
 (* ------------------------------------------------------------ *)
