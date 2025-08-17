@@ -1953,12 +1953,25 @@ Proof.
       symmetry. apply nth_error_default_eq.
 Qed.
 
-
 End JSONPath_Equiv.
+
+(** * Selector-Level Properties (Filter-Free Fragment) *)
 
 Import JSON JSONPath Exec JSONPath_Equiv.
 
-(* 1) Totality: a relational result always exists (it’s the exec result) *)
+(** ** List auxiliaries *)
+
+(** Length of [index_zip] equals the input length. *)
+Lemma length_index_zip {A} (xs : list A) :
+  List.length (index_zip xs) = List.length xs.
+Proof.
+  unfold index_zip.
+  rewrite combine_length, seq_length, Nat.min_id; reflexivity.
+Qed.
+
+(** ** Consequences of selector-level equivalence *)
+
+(** Totality of the relational selector semantics (filter-free). *)
 Corollary nf_selector_total :
   forall sel n,
     selector_filter_free sel = true ->
@@ -1967,7 +1980,7 @@ Proof.
   intros sel n Hff. eexists. eapply sel_exec_nf_sound; exact Hff.
 Qed.
 
-(* 2) Determinism up to permutation *)
+(** Determinism up to permutation for filter-free selectors. *)
 Corollary nf_selector_deterministic_up_to_perm :
   forall sel n res1 res2,
     selector_filter_free sel = true ->
@@ -1981,29 +1994,23 @@ Proof.
   - symmetry; eapply sel_exec_nf_complete; eauto.
 Qed.
 
-(* 3) Membership invariance *)
+(** Membership equivalence under permutation (filter-free selectors). *)
 Corollary nf_selector_in_iff :
   forall sel n res x,
     selector_filter_free sel = true ->
     eval_selector sel n res ->
     In x res <-> In x (Exec.sel_exec_nf sel n).
 Proof.
-  intros sel n res x Hff Hev.
-  split.
-  - (* -> *)
-    intro Hin.
-    eapply Permutation_in.
+  intros sel n res x Hff Hev; split.
+  - intro Hin. eapply Permutation_in.
     + eapply sel_exec_nf_complete; eauto.
     + exact Hin.
-  - (* <- *)
-    intro Hin.
-    eapply Permutation_in.
-    + apply Permutation_sym.
-      eapply sel_exec_nf_complete; eauto.
+  - intro Hin. eapply Permutation_in.
+    + apply Permutation_sym. eapply sel_exec_nf_complete; eauto.
     + exact Hin.
 Qed.
 
-(* 4) Cardinality invariance *)
+(** Cardinality preservation under permutation (filter-free selectors). *)
 Corollary nf_selector_length_eq :
   forall sel n res,
     selector_filter_free sel = true ->
@@ -2015,6 +2022,105 @@ Proof.
   eapply sel_exec_nf_complete; eauto.
 Qed.
 
+(** ** Arity and cardinality bounds *)
+
+(** [SelFilter] is inert in the non-filter interpreter. *)
+Corollary nf_selfilter_empty :
+  forall f n, Exec.sel_exec_nf (SelFilter f) n = [].
+Proof. intros f [p v]; reflexivity. Qed.
+
+(** Arity bound for [SelName]: at most one result. *)
+Corollary nf_selname_length_le1 :
+  forall p v s,
+    (List.length (Exec.sel_exec_nf (SelName s) (p, v)) <= 1)%nat.
+Proof.
+  intros p v s; destruct v as [| | | | xs | fields]; simpl; try lia.
+  destruct (find (fun kv => string_eqb (fst kv) s) fields) as [[k v']|]; simpl.
+  - apply le_n.      (* 1 <= 1 *)
+  - apply le_0_n.    (* 0 <= 1 *)
+Qed.
+
+(** Arity bound for [SelIndex]: at most one result. *)
+Corollary nf_selindex_length_le1 :
+  forall p v i,
+    (List.length (Exec.sel_exec_nf (SelIndex i) (p, v)) <= 1)%nat.
+Proof.
+  intros p v i; destruct v as [| | | | xs | fields]; simpl; try lia.
+  remember (if i <? 0 then Z.of_nat (List.length xs) + i else i) as idx.
+  destruct ((idx <? 0) || (idx >=? Z.of_nat (List.length xs))) eqn:Hoob; simpl.
+  - apply le_0_n.
+  - destruct (nth_error xs (Z.to_nat idx)); simpl; [apply le_n | apply le_0_n].
+Qed.
+
+(** Wildcard over objects: cardinality equals number of fields. *)
+Corollary nf_selwildcard_object_length :
+  forall p fields,
+    List.length (Exec.sel_exec_nf SelWildcard (p, JObject fields))
+    = List.length fields.
+Proof. intros; simpl; now rewrite map_length. Qed.
+
+(** Wildcard over arrays: cardinality equals number of elements. *)
+Corollary nf_selwildcard_array_length :
+  forall p xs,
+    List.length (Exec.sel_exec_nf SelWildcard (p, JArr xs))
+    = List.length xs.
+Proof.
+  intros; simpl; rewrite map_length, length_index_zip; reflexivity.
+Qed.
+
+(** Slice over arrays: cardinality equals [slice_positions] length. *)
+Corollary nf_selslice_array_length :
+  forall p xs st en stp,
+    List.length (Exec.sel_exec_nf (SelSlice st en stp) (p, JArr xs))
+    = List.length (slice_positions (List.length xs) st en stp).
+Proof. intros; simpl; now rewrite map_length. Qed.
+
+(** ** Path shape and permutation invariances *)
+
+(** Single-step path extension for filter-free selectors. *)
+Corollary nf_selector_child_step_shape :
+  forall sel p v p' v',
+    selector_filter_free sel = true ->
+    In (p', v') (Exec.sel_exec_nf sel (p, v)) ->
+    exists step, p' = List.app p [step].
+Proof.
+  intros sel p v p' v' Hff Hin.
+  destruct sel as [s | | i | st en stp | f]; simpl in Hff; try discriminate; clear Hff.
+  - (* SelName *)
+    destruct v as [| | | | xs | fields]; simpl in Hin; try contradiction.
+    destruct (find (fun kv => string_eqb (fst kv) s) fields) as [[k w]|] eqn:?; simpl in Hin; [|contradiction].
+    destruct Hin as [Heq|[]]; inversion Heq; eauto.
+  - (* SelWildcard *)
+    destruct v as [| | | | xs | fields]; simpl in Hin; try contradiction.
+    + (* JArr *)
+      apply in_map_iff in Hin.
+      destruct Hin as [[i0 w] [Hf Hin0]]; cbv [mk_node] in Hf; inversion Hf; eauto.
+    + (* JObject *)
+      apply in_map_iff in Hin.
+      destruct Hin as [[k w] [Hf Hin0]]; cbv [mk_node] in Hf; inversion Hf; eauto.
+  - (* SelIndex *)
+    destruct v as [| | | | xs | fields]; simpl in Hin; try contradiction.
+    remember (if i <? 0 then Z.of_nat (List.length xs) + i else i) as idx.
+    destruct ((idx <? 0) || (idx >=? Z.of_nat (List.length xs))) eqn:?; simpl in Hin; try contradiction.
+    destruct (nth_error xs (Z.to_nat idx)) eqn:?; simpl in Hin; [|contradiction].
+    destruct Hin as [Heq|[]]; inversion Heq; eauto.
+  - (* SelSlice *)
+    destruct v as [| | | | xs | fields]; simpl in Hin; try contradiction.
+    apply in_map_iff in Hin.
+    destruct Hin as [n0 [Hf Hin0]]; cbv [mk_node] in Hf; inversion Hf; eauto.
+Qed.
+
+(** Object wildcard: permutation-invariance under field reordering. *)
+Corollary nf_selwildcard_object_perm_invariant :
+  forall p fs perm,
+    Permutation perm fs ->
+    Permutation
+      (Exec.sel_exec_nf SelWildcard (p, JObject perm))
+      (Exec.sel_exec_nf SelWildcard (p, JObject fs)).
+Proof.
+  intros p fs perm Hperm; simpl.
+  apply Permutation_map; exact Hperm.
+Qed.
 
 (* ------------------------------------------------------------ *)
 (* OCaml Extraction                                             *)
