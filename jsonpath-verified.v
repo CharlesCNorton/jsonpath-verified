@@ -2362,7 +2362,6 @@ Proof.
     exfalso. cbn in Hlen. lia.
 Qed.
 
-
 Lemma segs_exec_nf_linear_len_le1 :
   forall segs ns,
     forallb linear_segment segs = true ->
@@ -2386,6 +2385,92 @@ Proof.
   change (Exec.segs_exec_nf segs [([], J)]) with (Exec.segs_exec_nf segs [([], J)]).
   eapply segs_exec_nf_linear_len_le1; [exact Hlin| simpl; lia].
 Qed.
+
+Lemma length_le1_cases {A} (xs : list A) :
+  (List.length xs <= 1)%nat -> xs = [] \/ exists x, xs = [x].
+Proof.
+  destruct xs as [|x xs']; intro H.
+  - now left.
+  - destruct xs' as [|y xs''].
+    + right. now eexists.
+    + exfalso. simpl in H. lia.
+Qed.
+
+(* Bridge: linear segments/queries imply the child-only fragment *)
+
+Lemma linear_implies_segment_child_only :
+  forall seg, linear_segment seg = true -> segment_child_only seg = true.
+Proof.
+  intros seg H.
+  destruct seg as [sels|sels]; simpl in H; [| discriminate H].
+  destruct sels as [|sel sels']; simpl in H; [discriminate H|].
+  destruct sel; simpl in H; try discriminate H.
+  - (* SelName *)
+    destruct sels' as [|s' ss']; simpl in H; [reflexivity | discriminate H].
+  - (* SelIndex *)
+    destruct sels' as [|s' ss']; simpl in H; [reflexivity | discriminate H].
+Qed.
+
+Lemma linear_query_implies_child_only :
+  forall q, linear_query q = true -> query_child_only q = true.
+Proof.
+  intros [segs] H; simpl in *.
+  induction segs as [|seg segs IH]; simpl in *; auto.
+  apply Bool.andb_true_iff in H as [Hseg Hrest].
+  rewrite (linear_implies_segment_child_only _ Hseg), IH; auto.
+Qed.
+
+(* Permutation on singletons collapses to equality *)
+Lemma permutation_singleton {A} (x : A) (ys : list A) :
+  Permutation [x] ys -> ys = [x].
+Proof.
+  intro P.
+  destruct ys as [|y ys'].
+  - pose proof (Permutation_length P) as L; simpl in L; discriminate L.
+  - destruct ys' as [|z zs].
+    + assert (Hin : In x [y]) by (eapply Permutation_in; [exact P|simpl; auto]).
+      simpl in Hin. destruct Hin as [->|[]]. reflexivity.
+    + pose proof (Permutation_length P) as L; simpl in L; discriminate L.
+Qed.
+
+(* Exact equivalence (not just up to permutation) for linear queries *)
+Theorem linear_query_exact_equiv :
+  forall q J res,
+    linear_query q = true ->
+    eval q J res ->
+    res = Exec.eval_exec_nf q J.
+Proof.
+  intros q J res Hlin Hev.
+  pose proof (linear_query_implies_child_only q Hlin) as Hco.
+  pose proof (child_only_end_to_end_equiv q J res Hco Hev) as P.
+  pose proof (linear_query_arity_le1 q J Hlin) as Hle.
+  set (E := Exec.eval_exec_nf q J) in *.
+  destruct (length_le1_cases _ Hle) as [E_nil | [x E_one]].
+  - (* E = [] *)
+    rewrite E_nil in P.                (* P : Permutation res [] *)
+    apply Permutation_sym in P.        (* P : Permutation [] res *)
+    apply Permutation_nil in P.        (* res = [] *)
+    subst res. rewrite E_nil. reflexivity.
+  - (* E = [x] *)
+    rewrite E_one in P.                (* P : Permutation res [x] *)
+    apply Permutation_sym in P.        (* P : Permutation [x] res *)
+    pose proof (permutation_singleton x res P) as ->.  (* res = [x] *)
+    now rewrite E_one.
+Qed.
+
+(* Search = Match with .* r .* at the holds_b level *)
+Lemma holds_b_search_as_match :
+  forall a r p v,
+    Exec.holds_b (FSearch a r) (p, v)
+    =
+    Exec.holds_b (FMatch a (RCat (RStar RAny) (RCat r (RStar RAny)))) (p, v).
+Proof.
+  intros a r p v.
+  cbn [Exec.holds_b].
+  destruct (Exec.aeval a v) as [pa|] eqn:Ha; [|reflexivity].
+  destruct pa as [| | | s]; cbn [Regex.regex_search]; reflexivity.
+Qed.
+
 
 (* ------------------------------------------------------------ *)
 (* OCaml Extraction                                             *)
