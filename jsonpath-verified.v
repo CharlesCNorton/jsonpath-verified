@@ -74,6 +74,8 @@ Definition Qleb (x y:Q) : bool :=
 Definition Q_of_Z (z:Z) : Q := inject_Z z.
 Definition Q_of_nat (n:nat) : Q := inject_Z (Z.of_nat n).
 
+
+
 (* ------------------------------------------------------------ *)
 (* JSON core                                                    *)
 (* ------------------------------------------------------------ *)
@@ -2301,6 +2303,90 @@ Proof.
   eapply child_only_end_to_end_equiv; eauto.
 Qed.
 
+(** * Linear-path arity bound: at most one result *)
+
+Definition linear_segment (s:segment) : bool :=
+  match s with
+  | Child [SelName _]  => true
+  | Child [SelIndex _] => true
+  | _ => false
+  end.
+
+Definition linear_query (q:query) : bool :=
+  match q with
+  | Query segs => forallb linear_segment segs
+  end.
+
+Lemma seg_exec_nf_singleton :
+  forall sel n,
+    Exec.seg_exec_nf (Child [sel]) n = Exec.sel_exec_nf sel n.
+Proof.
+  intros sel n.
+  cbn [Exec.seg_exec_nf Exec.seg_exec_impl Exec.child_on_node_impl].
+  cbn [child_on_node_impl map List.concat].
+  rewrite List.app_nil_r.
+  reflexivity.
+Qed.
+
+Lemma seg_linear_on_single_len_le1 :
+  forall seg n,
+    linear_segment seg = true ->
+    (List.length (Exec.seg_exec_nf seg n) <= 1)%nat.
+Proof.
+  intros seg [p v] Hlin.
+  destruct seg as [sels|sels]; simpl in Hlin; [| discriminate Hlin].
+  destruct sels as [|sel sels']; simpl in Hlin; [discriminate Hlin|].
+  destruct sel; simpl in Hlin; try discriminate Hlin.
+  - (* SelName *)
+    destruct sels' as [| s' ss']; [| discriminate Hlin].
+    rewrite seg_exec_nf_singleton.
+    apply nf_selname_length_le1.
+  - (* SelIndex *)
+    destruct sels' as [| s' ss']; [| discriminate Hlin].
+    rewrite seg_exec_nf_singleton.
+    apply nf_selindex_length_le1.
+Qed.
+
+Lemma step_linear_preserves_le1 :
+  forall seg ns,
+    linear_segment seg = true ->
+    (List.length ns <= 1)%nat ->
+    (List.length (List.concat (map (Exec.seg_exec_nf seg) ns)) <= 1)%nat.
+Proof.
+  intros seg ns Hlin Hlen.
+  destruct ns as [|n ns']; cbn [map List.concat]; try lia.
+  destruct ns' as [|n2 ns'']; cbn [map List.concat] in *.
+  - rewrite List.app_nil_r.
+    apply seg_linear_on_single_len_le1; exact Hlin.
+  - (* impossible by Hlen: length (n :: n2 :: ns'') <= 1 *)
+    exfalso. cbn in Hlen. lia.
+Qed.
+
+
+Lemma segs_exec_nf_linear_len_le1 :
+  forall segs ns,
+    forallb linear_segment segs = true ->
+    (List.length ns <= 1)%nat ->
+    (List.length (Exec.segs_exec_nf segs ns) <= 1)%nat.
+Proof.
+  induction segs as [|seg segs IH]; intros ns Hok Hns; simpl in *.
+  - exact Hns.
+  - apply Bool.andb_true_iff in Hok as [Hseg Hok'].
+    specialize (step_linear_preserves_le1 seg ns Hseg Hns).
+    intros Hstep.
+    eapply IH; [exact Hok'| exact Hstep].
+Qed.
+
+Theorem linear_query_arity_le1 :
+  forall q J,
+    linear_query q = true ->
+    (List.length (Exec.eval_exec_nf q J) <= 1)%nat.
+Proof.
+  intros [segs] J Hlin; simpl in *.
+  change (Exec.segs_exec_nf segs [([], J)]) with (Exec.segs_exec_nf segs [([], J)]).
+  eapply segs_exec_nf_linear_len_le1; [exact Hlin| simpl; lia].
+Qed.
+
 (* ------------------------------------------------------------ *)
 (* OCaml Extraction                                             *)
 (* ------------------------------------------------------------ *)
@@ -2308,35 +2394,34 @@ Qed.
 From Coq Require Import Extraction.
 Require Import Coq.extraction.ExtrOcamlBasic.
 Require Import Coq.extraction.ExtrOcamlString.
+Require Import Coq.extraction.ExtrOcamlChar.
 Require Import Coq.extraction.ExtrOcamlZBigInt.
 
-Extraction Blacklist String List Int Z.
+Set Extraction KeepSingleton.
 Extraction Language OCaml.
+Extraction Blacklist String List Int Z.
+
+Extraction NoInline
+  Exec.eval_exec
+  Exec.eval_exec_nf
+  Exec.visit_df_node
+  Regex.regex_match
+  Regex.regex_search.
 
 Extraction Inline
   string_eqb ascii_eqb ascii_ltb ascii_leb
   Qeqb Qltb Qleb
+  clamp normalize_slice_bounds up_by down_by slice_positions
+  nth_default
   Exec.child_on_node_impl Exec.seg_exec_impl Exec.segs_exec_impl
   Regex.nullable Regex.deriv Regex.rsimpl Regex.deriv_simpl
   Regex.list_of_string Regex.matches_from.
 
-Extraction "jsonpath_exec.ml"
-  (* JSON core *)
-  JSON.value JSON.step JSON.path JSON.node
-
-  (* JSONPath AST *)
-  JSONPath.prim JSONPath.cmp JSONPath.regex
-  JSONPath.aexpr JSONPath.fexpr JSONPath.selector
-  JSONPath.segment JSONPath.query JSONPath.q_segs
-
-  (* Regex API *)
-  Regex.regex_match Regex.regex_search
-
-  (* Executable entry points *)
-  Exec.eval_exec
-  Exec.eval_exec_nf
-  Exec.visit_df_node
-
-  (* Datasets *)
+Separate Extraction
+  JSON
+  JSONPath
+  Regex
+  Exec
+  Typing
   company_json
   acme_db_json.
