@@ -2122,6 +2122,185 @@ Proof.
   apply Permutation_map; exact Hperm.
 Qed.
 
+(* ============================================================ *)
+(* End-to-end equivalence for the child-only, filter-free core *)
+(* ============================================================ *)
+
+Import JSON JSONPath Exec JSONPath_Equiv.
+
+(* Helper: concat respects Forall2 Permutation pointwise *)
+Lemma Permutation_concat_Forall2 :
+  forall (xs ys : list (list JSON.node)),
+    Forall2 (fun a b => Permutation a b) xs ys ->
+    Permutation (List.concat xs) (List.concat ys).
+Proof.
+  intros xs ys H; induction H.
+  - simpl; apply Permutation_refl.
+  - simpl; now apply Permutation_app.
+Qed.
+
+(* Segment-level completeness for Child segments with filter-free selectors *)
+Lemma seg_exec_nf_complete_child :
+  forall seg n res,
+    segment_child_only seg = true ->
+    eval_seg seg n res ->
+    Permutation res (Exec.seg_exec_nf seg n).
+Proof.
+  intros seg n res Hok Hev.
+  destruct seg as [sels | sels]; simpl in Hok; try discriminate.
+  inversion Hev as [sels' n' results Hex |]; subst; clear Hev.
+  destruct Hex as [selector_results [Hall ->]].
+  revert Hok Hall.
+  generalize dependent selector_results.
+  induction sels as [|sel sels IH]; intros selector_results Hok Hall; simpl in *.
+  - inversion Hall; subst; simpl; apply Permutation_refl.
+  - apply Bool.andb_true_iff in Hok as [Hhd Hok'].
+    inversion Hall as [| sel' res_sel sels' selres_tail Hsel_ev Hall_tail]; subst.
+    simpl.
+    (* concat (res_sel :: selres_tail) = res_sel ++ concat selres_tail *)
+    (* concat (map _ (sel :: sels)) = exec_hd ++ concat (map _ sels) *)
+    apply Permutation_app.
+    + eapply sel_exec_nf_complete; eauto.
+    + apply IH; assumption.
+Qed.
+
+(* concat respects Permutation over lists of lists *)
+Lemma Permutation_concat_listlist {A} :
+  forall (xs ys : list (list A)),
+    Permutation xs ys ->
+    Permutation (List.concat xs) (List.concat ys).
+Proof.
+  intros xs ys P; induction P; simpl.
+  - apply Permutation_refl.
+  - (* skip: x :: l ~ x :: l' *)
+    apply Permutation_app_head; exact IHP.
+  - (* swap: x :: y :: l ~ y :: x :: l *)
+    repeat rewrite app_assoc.
+    apply Permutation_app_tail.
+    apply Permutation_app_comm.
+  - (* trans *)
+    eapply Permutation_trans; eauto.
+Qed.
+
+(* The nf multi-segment executor preserves permutations of its input list *)
+Lemma segs_exec_nf_perm :
+  forall segs ns ns',
+    Permutation ns ns' ->
+    Permutation (Exec.segs_exec_nf segs ns)
+                (Exec.segs_exec_nf segs ns').
+Proof.
+  intros segs ns ns' P.
+  revert ns ns' P.
+  induction segs as [|seg segs IH]; intros ns ns' P; simpl.
+  - exact P.
+  - (* One step: concat ∘ map (seg_exec_nf seg) preserves permutations *)
+    pose proof (Permutation_map (Exec.seg_exec_nf seg) P) as Pmap.
+    pose proof (@Permutation_concat_listlist JSON.node
+                  (map (Exec.seg_exec_nf seg) ns)
+                  (map (Exec.seg_exec_nf seg) ns') Pmap) as Pconcat.
+    (* Push through the remaining segments by IH *)
+    apply IH; exact Pconcat.
+Qed.
+
+(* Pointwise: relational seg results are a permutation of exec seg results *)
+Lemma Forall2_eval_seg_perm :
+  forall seg ns node_results,
+    segment_child_only seg = true ->
+    Forall2 (fun n res => eval_seg seg n res) ns node_results ->
+    Forall2 (fun res mapped => Permutation res mapped)
+            node_results
+            (map (Exec.seg_exec_nf seg) ns).
+Proof.
+  intros seg ns node_results Hseg Hall.
+  induction Hall; simpl; constructor.
+  - eapply seg_exec_nf_complete_child; eauto.
+  - apply IHHall; exact Hseg.
+Qed.
+
+(* ==== Fixed driver lemma ==== *)
+Lemma eval_rest_on_nodes_nf_complete :
+  forall segs ns finals,
+    forallb segment_child_only segs = true ->
+    eval_rest_on_nodes segs ns finals ->
+    Permutation finals (Exec.segs_exec_nf segs ns).
+Proof.
+  intros segs ns finals Hok Hev; induction Hev.
+  - simpl; apply Permutation_refl.
+  - simpl in Hok; apply Bool.andb_true_iff in Hok as [Hseg Hok'].
+    destruct H as [node_results [Hall ->]].
+(* Step 1: rewrite inter = concat node_results to executable concat(map ...) *)
+pose proof (Forall2_eval_seg_perm seg ns node_results Hseg Hall) as Hpointwise.
+    pose proof (Permutation_concat_Forall2 _ _ Hpointwise) as Hconcat.
+    (* Hconcat : Permutation (List.concat node_results)
+                              (List.concat (map (Exec.seg_exec_nf seg) ns)) *)
+    (* Step 2: use IH on 'rest' at the relational inter (concat node_results) *)
+    specialize (IHHev Hok').
+    (* IHHev : Permutation finals (Exec.segs_exec_nf rest (List.concat node_results)) *)
+    (* Step 3: push the permutation of the inter list through the remaining executor *)
+    pose proof (segs_exec_nf_perm rest
+                    (List.concat node_results)
+                    (List.concat (map (Exec.seg_exec_nf seg) ns))
+                    Hconcat) as Hpush.
+    (* Step 4: chain *)
+    eapply Permutation_trans; [exact IHHev|].
+    exact Hpush.
+Qed.
+
+Corollary child_only_end_to_end_equiv :
+  forall q J res,
+    query_child_only q = true ->
+    eval q J res ->
+    Permutation res (Exec.eval_exec_nf q J).
+Proof.
+  intros [segs] J res Hq He.
+  inversion He; subst; clear He.
+  simpl in Hq.
+  eapply eval_rest_on_nodes_nf_complete; eauto.
+Qed.
+
+(* Determinism up to permutation at the query level *)
+Corollary child_only_query_deterministic_up_to_perm :
+  forall q J res1 res2,
+    query_child_only q = true ->
+    eval q J res1 ->
+    eval q J res2 ->
+    Permutation res1 res2.
+Proof.
+  intros q J res1 res2 Hq H1 H2.
+  transitivity (Exec.eval_exec_nf q J).
+  - eapply child_only_end_to_end_equiv; eauto.
+  - symmetry; eapply child_only_end_to_end_equiv; eauto.
+Qed.
+
+(* Membership invariance *)
+Corollary child_only_query_in_iff :
+  forall q J res x,
+    query_child_only q = true ->
+    eval q J res ->
+    In x res <-> In x (Exec.eval_exec_nf q J).
+Proof.
+  intros q J res x Hq Hev; split; intro Hin.
+  - eapply Permutation_in.
+    + eapply child_only_end_to_end_equiv; eauto.
+    + exact Hin.
+  - eapply Permutation_in.
+    + apply Permutation_sym.
+      eapply child_only_end_to_end_equiv; eauto.
+    + exact Hin.
+Qed.
+
+(* Cardinality invariance *)
+Corollary child_only_query_length_eq :
+  forall q J res,
+    query_child_only q = true ->
+    eval q J res ->
+    List.length res = List.length (Exec.eval_exec_nf q J).
+Proof.
+  intros q J res Hq Hev.
+  eapply Permutation_length.
+  eapply child_only_end_to_end_equiv; eauto.
+Qed.
+
 (* ------------------------------------------------------------ *)
 (* OCaml Extraction                                             *)
 (* ------------------------------------------------------------ *)
