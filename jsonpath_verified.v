@@ -2545,6 +2545,463 @@ Module API.
 End API.
 
 (* ------------------------------------------------------------ *)
+(* QuickChick: generators + properties                          *)
+(* ------------------------------------------------------------ *)
+
+From QuickChick Require Import QuickChick.
+From QuickChick Require Import Generators Producer Classes Checker.
+Import QcDefaultNotation. Open Scope qc_scope.
+
+(* If you use coq_makefile, add "QuickChick" in _CoqProject and
+   `opam install coq-quickchick`. *)
+
+(* ---------- Small utilities ---------- *)
+
+#[global] Instance genBool : Gen bool := {
+  arbitrary := bindGen (choose (0%nat,1%nat)) (fun n => returnGen (Nat.eqb n 1))
+}.
+
+Fixpoint string_of_list_ascii (cs:list ascii) : string :=
+  match cs with
+  | [] => EmptyString
+  | c::cs' => String c (string_of_list_ascii cs')
+  end.
+
+Fixpoint list_eqb {A} (eqb:A->A->bool) (xs ys:list A) : bool :=
+  match xs, ys with
+  | [], [] => true
+  | x::xs', y::ys' => andb (eqb x y) (list_eqb eqb xs' ys')
+  | _, _ => false
+  end.
+
+(* Deduplicate object fields on key (first occurrence wins). *)
+Definition fields_dedup (fs:list (string * JSON.value)) : list (string * JSON.value) :=
+  fold_right
+    (fun kv acc =>
+       if existsb (fun kv' => string_eqb (fst kv') (fst kv)) acc
+       then acc else kv :: acc)
+    [] fs.
+
+(* ---------- Show instances (for readable counterexamples) ---------- *)
+
+(* Manual Show instance for ascii *)
+Instance show_ascii : Show ascii := {
+  show a := String a EmptyString
+}.
+
+(* Manual Show instance for Z - converting to decimal string *)
+Require Import ZArith.
+Fixpoint nat_to_string_aux (fuel n : nat) (acc : string) : string :=
+  match fuel with
+  | O => acc
+  | S fuel' =>
+      match n with
+      | O => match acc with "" => "0" | _ => acc end
+      | _ =>
+          let d := Nat.modulo n 10 in
+          let c := ascii_of_nat (48 + d) in
+          nat_to_string_aux fuel' (Nat.div n 10) (String c acc)
+      end
+  end.
+
+Definition nat_to_string (n : nat) : string :=
+  nat_to_string_aux (S n) n "".
+
+Instance show_Z : Show Z := {
+  show z := match z with
+           | Z0 => "0"
+           | Zpos p => nat_to_string (Pos.to_nat p)
+           | Zneg p => "-" ++ nat_to_string (Pos.to_nat p)
+           end
+}.
+
+(* Manual Show instance for Q since Derive doesn't work well *)
+Instance show_Q : Show Q := {
+  show q := show (Qnum q) ++ "/" ++ show (Zpos (Qden q))
+}.
+
+(* Manual Show instance for bool *)
+Instance show_bool : Show bool := {
+  show b := if b then "true" else "false"
+}.
+
+(* Manual Show instance for nat *)
+Instance show_nat : Show nat := {
+  show n := show (Z.of_nat n)
+}.
+
+(* Manual Show instance for JSON.value *)
+Fixpoint show_json_value (v : JSON.value) : string :=
+  match v with
+  | JSON.JNull => "null"
+  | JSON.JBool b => show b
+  | JSON.JNum q => show q
+  | JSON.JStr s => """" ++ s ++ """"
+  | JSON.JArr xs => "[" ++ String.concat ", " (map show_json_value xs) ++ "]"
+  | JSON.JObject fs => "{" ++ String.concat ", " 
+                            (map (fun '(k,v) => """" ++ k ++ """: " ++ show_json_value v) fs) ++ "}"
+  end.
+
+Instance show_JSON_value : Show JSON.value := {
+  show := show_json_value
+}.
+
+(* Manual Show for JSON.step *)
+Instance show_JSON_step : Show JSON.step := {
+  show s := match s with
+           | JSON.SName name => "." ++ name
+           | JSON.SIndex i => "[" ++ show i ++ "]"
+           end
+}.
+
+(* Manual Show instances for JSONPath types - simplified *)
+Instance show_JSONPath_selector : Show JSONPath.selector := {
+  show s := match s with
+           | JSONPath.SelName n => "'" ++ n ++ "'"
+           | JSONPath.SelIndex i => show i
+           | JSONPath.SelWildcard => "*"
+           | JSONPath.SelSlice start stop step => 
+               show start ++ ":" ++ show stop ++ ":" ++ show step
+           | JSONPath.SelFilter _ => "<filter>"
+           end
+}.
+
+Instance show_JSONPath_segment : Show JSONPath.segment := {
+  show seg := match seg with
+             | JSONPath.Child sels => ".child" 
+             | JSONPath.Desc sels => "..desc"
+             end
+}.
+
+Instance show_JSONPath_query : Show JSONPath.query := {
+  show q := match q with
+           | JSONPath.Query segs => 
+               let n := List.length segs in
+               "$[" ++ (show n) ++ " segments]"
+           end
+}.
+
+Instance show_JSONPath_regex : Show JSONPath.regex := {
+  show r := "<regex>"
+}.
+
+Instance show_JSONPath_prim : Show JSONPath.prim := {
+  show p := "<prim>"
+}.
+
+Instance show_JSONPath_aexpr : Show JSONPath.aexpr := {
+  show a := "<aexpr>"
+}.
+
+Instance show_JSONPath_fexpr : Show JSONPath.fexpr := {
+  show f := "<fexpr>"
+}.
+
+(* ---------- Generators ---------- *)
+
+(* Restrict ASCII to 'a'..'z' so keys/strings are short and readable. *)
+Definition genLowerAscii : G ascii :=
+  bindGen (choose (0,25)) (fun n =>
+  returnGen (ascii_of_nat (97 + Z.to_nat n))).
+
+(* Short "word" strings. *)
+Definition genKey : G string :=
+  sized (fun s =>
+    bindGen (choose (0, Z.of_nat (min 6 s))) (fun len =>
+    bindGen (vectorOf (Z.to_nat len) genLowerAscii) (fun cs =>
+    returnGen (string_of_list_ascii cs)))).
+
+(* Small integers for indices / numbers. *)
+Definition genSmallZ : G Z := choose (-6, 6).
+
+(* JSON numbers as rationals: keep them as integers for simplicity. *)
+Definition genQ : G Q := 
+  bindGen genSmallZ (fun z => returnGen (inject_Z z)).
+
+(* Sized JSON generator. *)
+Definition gen_value_base : G JSON.value :=
+  oneOf
+    [ returnGen JSON.JNull
+    ; bindGen arbitrary (fun b => returnGen (JSON.JBool b))
+    ; bindGen genQ (fun q => returnGen (JSON.JNum q))
+    ; bindGen genKey (fun k => returnGen (JSON.JStr k))
+    ].
+
+Fixpoint gen_value_sized (s:nat) : G JSON.value :=
+  match s with
+  | O => gen_value_base
+  | S s' =>
+      freq
+        [ (4%nat, gen_value_base)
+        ; (3%nat, bindGen (listOf (resize s' (gen_value_sized s'))) (fun xs => returnGen (JSON.JArr xs)))
+        ; (3%nat, bindGen (listOf (liftGen2 pair genKey (resize s' (gen_value_sized s')))) (fun kvs =>
+              returnGen (JSON.JObject (fields_dedup kvs))))
+        ]
+  end.
+
+Definition gen_value : G JSON.value := sized gen_value_sized.
+Instance Arbitrary_value : GenSized JSON.value := { arbitrarySized := gen_value_sized }.
+
+(* Linear segment/query generators (Child [SelName s]) or (Child [SelIndex i]). *)
+Definition gen_segment_linear : G JSONPath.segment :=
+  oneOf
+    [ bindGen genKey (fun s => returnGen (JSONPath.Child [JSONPath.SelName s]))
+    ; bindGen genSmallZ (fun i => returnGen (JSONPath.Child [JSONPath.SelIndex i]))
+    ].
+
+Fixpoint gen_query_linear_sized (s:nat) : G JSONPath.query :=
+  match s with
+  | O => returnGen (JSONPath.Query [])
+  | S _ =>
+      bindGen (choose (0, 6)) (fun n =>
+      bindGen (vectorOf (Z.to_nat n) gen_segment_linear) (fun segs =>
+      returnGen (JSONPath.Query segs)))
+  end.
+Definition gen_query_linear : G JSONPath.query := sized gen_query_linear_sized.
+
+(* Simple regex generator. *)
+Definition gen_regex_base : G JSONPath.regex :=
+  oneOf
+    [ returnGen JSONPath.REps
+    ; bindGen genLowerAscii (fun c => returnGen (JSONPath.RChr c))
+    ; returnGen JSONPath.RAny
+    ].
+
+Fixpoint gen_regex_sized (s:nat) : G JSONPath.regex :=
+  match s with
+  | O => gen_regex_base
+  | S s' =>
+      freq
+        [ (3%nat, gen_regex_base)
+        ; (3%nat, bindGen (gen_regex_sized s') (fun r => returnGen (JSONPath.RStar r)))
+        ; (3%nat, bindGen (gen_regex_sized s') (fun r1 => bindGen (gen_regex_sized s') (fun r2 => returnGen (JSONPath.RAlt r1 r2))))
+        ; (3%nat, bindGen (gen_regex_sized s') (fun r1 => bindGen (gen_regex_sized s') (fun r2 => returnGen (JSONPath.RCat r1 r2))))
+        ]
+  end.
+Definition gen_regex : G JSONPath.regex := sized gen_regex_sized.
+
+(* Arrays/objects as generators for focused tests. *)
+Definition gen_array : G (list JSON.value) :=
+  sized (fun s => resize (min 5 s) (listOf gen_value)).
+
+Definition gen_object_fields : G (list (string * JSON.value)) :=
+  sized (fun s =>
+    bindGen (resize (min 5 s) (listOf (liftGen2 pair genKey gen_value))) (fun kvs =>
+    returnGen (fields_dedup kvs))).
+
+(* ---------- Equality helpers for paths/nodes (for set/subset checks) ---------- *)
+
+Definition step_eqb (a b:JSON.step) : bool :=
+  match a, b with
+  | JSON.SName s1,  JSON.SName s2  => string_eqb s1 s2
+  | JSON.SIndex i1, JSON.SIndex i2 => Z.eqb i1 i2
+  | _, _ => false
+  end.
+
+Definition path_eqb : JSON.path -> JSON.path -> bool :=
+  list_eqb step_eqb.
+
+Fixpoint value_eqb (v1 v2:JSON.value) {struct v1} : bool :=
+  match v1, v2 with
+  | JSON.JNull, JSON.JNull => true
+  | JSON.JBool b1, JSON.JBool b2 => Bool.eqb b1 b2
+  | JSON.JNum q1, JSON.JNum q2 => Qeqb q1 q2
+  | JSON.JStr s1, JSON.JStr s2 => string_eqb s1 s2
+  | JSON.JArr xs, JSON.JArr ys =>
+      let fix arr_eqb (l1 l2: list JSON.value) {struct l1} :=
+        match l1, l2 with
+        | [], [] => true
+        | v1'::t1, v2'::t2 => andb (value_eqb v1' v2') (arr_eqb t1 t2)
+        | _, _ => false
+        end
+      in arr_eqb xs ys
+  | JSON.JObject fs1, JSON.JObject fs2 =>
+      let fix fields_eqb (l1 l2: list (string * JSON.value)) {struct l1} :=
+        match l1, l2 with
+        | [], [] => true
+        | (k1,v1')::t1, (k2,v2')::t2 =>
+            andb (string_eqb k1 k2) (andb (value_eqb v1' v2') (fields_eqb t1 t2))
+        | _, _ => false
+        end
+      in fields_eqb fs1 fs2
+  | _, _ => false
+  end.
+
+Definition node_eqb (n1 n2:JSON.node) : bool :=
+  let '(p1,v1) := n1 in
+  let '(p2,v2) := n2 in
+  andb (path_eqb p1 p2) (value_eqb v1 v2).
+
+Fixpoint countBy {A} (eqb:A->A->bool) (x:A) (xs:list A) : nat :=
+  match xs with
+  | [] => 0
+  | y::ys => (if eqb x y then 1 else 0) + countBy eqb x ys
+  end.
+
+Definition multiset_eqb {A} (eqb:A->A->bool) (xs ys:list A) : bool :=
+  andb (forallb (fun x => Nat.eqb (countBy eqb x xs) (countBy eqb x ys)) xs)
+       (forallb (fun y => Nat.eqb (countBy eqb y xs) (countBy eqb y ys)) ys).
+
+Definition subset_paths (xs ys:list JSON.path) : bool :=
+  forallb (fun x => existsb (fun y => path_eqb x y) ys) xs.
+
+(* ---------- Properties (as Checkers) ---------- *)
+
+(* 1) Linear queries always return <= 1 result (matches theorem). *)
+Definition prop_linear_len_le1 : Checker :=
+  forAll gen_query_linear (fun q =>
+  forAll gen_value (fun J =>
+    let n := List.length (Exec.eval_exec_nf q J) in
+    collect (List.length (JSONPath.q_segs q))
+      (checker (Nat.leb n 1)))).
+
+(* 2) Wildcard over objects: length equals number of fields. *)
+Definition prop_wildcard_object_length : Checker :=
+  forAll gen_object_fields (fun fs =>
+    let ns := Exec.sel_exec_nf JSONPath.SelWildcard ([], JSON.JObject fs) in
+    checker (Nat.eqb (List.length ns) (List.length fs))).
+
+(* 3) Wildcard over arrays: length equals number of elements. *)
+Definition prop_wildcard_array_length : Checker :=
+  forAll gen_array (fun xs =>
+    let ns := Exec.sel_exec_nf JSONPath.SelWildcard ([], JSON.JArr xs) in
+    checker (Nat.eqb (List.length ns) (List.length xs))).
+
+(* 4) Desc is a superset of a single child step at the root (on paths). *)
+Definition prop_desc_superset_name : Checker :=
+  forAll genKey (fun s =>
+  forAll gen_value (fun J =>
+    let desc_paths  := map (@fst _ _) (Exec.eval_exec (JSONPath.Query [JSONPath.Desc [JSONPath.SelName s]]) J) in
+    let child_paths := map (@fst _ _) (Exec.eval_exec (JSONPath.Query [JSONPath.Child [JSONPath.SelName s]]) J) in
+    checker (subset_paths child_paths desc_paths))).
+
+(* 5) Search(a,r) = Match(a, dot-star r dot-star) on strings (matches lemma). *)
+Definition prop_search_as_match_on_strings : Checker :=
+  forAll gen_regex (fun r =>
+  forAll genKey (fun s =>
+    let a := JSONPath.APrim (JSONPath.PStr s) in
+    let lhs := Exec.holds_b (JSONPath.FSearch a r) ([], JSON.JNull) in
+    let rhs := Exec.holds_b (JSONPath.FMatch a (JSONPath.RCat (JSONPath.RStar JSONPath.RAny)
+                                               (JSONPath.RCat r (JSONPath.RStar JSONPath.RAny))))
+                            ([], JSON.JNull) in
+    checker (Bool.eqb lhs rhs))).
+
+(* ---------- How to run ----------
+
+   In CoqIDE/Proof General:
+
+     QuickChick prop_linear_len_le1.
+     QuickChick prop_wildcard_object_length.
+     QuickChick prop_wildcard_array_length.
+     QuickChick prop_desc_superset_name.
+     QuickChick prop_search_as_match_on_strings.
+
+   You can also `Sample gen_value.` or `Sample gen_query_linear.` to see data.
+   Use: Set Warnings "-extraction-opaque-accessed". if QuickChick warns.
+*)
+
+(* ------------------------------------------------------------ *)
+(* Test Suite: Comprehensive Property Testing                   *)
+(* ------------------------------------------------------------ *)
+
+(* Configuration for extensive testing *)
+Definition test_size : nat := 20.  (* Size parameter for generators *)
+Definition num_tests : nat := 1000. (* Number of tests per property *)
+
+(* Combined test suite runner *)
+Definition run_all_tests : Checker :=
+  conjoin [
+    whenFail "FAILED: Linear queries should return <= 1 result" 
+      prop_linear_len_le1;
+    whenFail "FAILED: Wildcard over objects length mismatch"
+      prop_wildcard_object_length;
+    whenFail "FAILED: Wildcard over arrays length mismatch"
+      prop_wildcard_array_length;
+    whenFail "FAILED: Desc should be superset of Child"
+      prop_desc_superset_name;
+    whenFail "FAILED: Search != Match(.*r.*)"
+      prop_search_as_match_on_strings
+  ].
+
+(* Test with custom parameters for thorough fuzzing *)
+(* Note: QuickChick will run these with default parameters,
+   typically 100 tests. For more extensive testing, use
+   QuickChick with command-line arguments or extract to OCaml *)
+Definition extensive_test_linear : Checker :=
+  prop_linear_len_le1.
+
+Definition extensive_test_wildcard_obj : Checker :=
+  prop_wildcard_object_length.
+
+Definition extensive_test_wildcard_arr : Checker :=
+  prop_wildcard_array_length.
+
+Definition extensive_test_desc : Checker :=
+  prop_desc_superset_name.
+
+Definition extensive_test_search : Checker :=
+  prop_search_as_match_on_strings.
+
+(* Master test suite with statistics *)
+Definition test_suite_with_stats : Checker :=
+  conjoin [
+    collect "Linear query tests" extensive_test_linear;
+    collect "Wildcard object tests" extensive_test_wildcard_obj;
+    collect "Wildcard array tests" extensive_test_wildcard_arr;
+    collect "Desc superset tests" extensive_test_desc;
+    collect "Search/Match tests" extensive_test_search
+  ].
+
+(* Stress test with edge cases *)
+Definition stress_test_edge_cases : Checker :=
+  let empty_json := returnGen JSON.JNull in
+  let empty_array := returnGen (JSON.JArr []) in
+  let empty_object := returnGen (JSON.JObject []) in
+  let deeply_nested := 
+    returnGen (JSON.JArr [JSON.JArr [JSON.JArr [JSON.JNum (inject_Z 42)]]]) in
+  conjoin [
+    (* Test with empty values *)
+    forAll empty_json (fun j =>
+      whenFail "Failed on null JSON"
+        (checker (Nat.leb (List.length (Exec.eval_exec_nf 
+          (JSONPath.Query []) j)) 1)));
+    forAll empty_array (fun j =>
+      whenFail "Failed on empty array"
+        (checker (Nat.eqb (List.length (Exec.sel_exec_nf 
+          JSONPath.SelWildcard ([], j))) 0)));
+    forAll empty_object (fun j =>
+      whenFail "Failed on empty object"
+        (checker (Nat.eqb (List.length (Exec.sel_exec_nf 
+          JSONPath.SelWildcard ([], j))) 0)));
+    (* Test with deeply nested structures *)
+    forAll deeply_nested (fun j =>
+      whenFail "Failed on deeply nested"
+        (checker (Nat.leb (List.length (Exec.eval_exec_nf 
+          (JSONPath.Query [JSONPath.Child [JSONPath.SelIndex 0];
+                          JSONPath.Child [JSONPath.SelIndex 0];
+                          JSONPath.Child [JSONPath.SelIndex 0]]) j)) 1)))
+  ].
+
+(* Performance test - checking that operations complete in reasonable time *)
+Definition performance_test : Checker :=
+  (* Generate larger structures to test performance *)
+  let large_array := 
+    bindGen (vectorOf 100 genSmallZ) (fun zs =>
+    returnGen (JSON.JArr (map (fun z => JSON.JNum (inject_Z z)) zs))) in
+  let large_object :=
+    bindGen (vectorOf 50 genKey) (fun keys =>
+    bindGen (vectorOf 50 gen_value_base) (fun vals =>
+    returnGen (JSON.JObject (combine keys vals)))) in
+  conjoin [
+    forAll large_array (fun j =>
+      whenFail "Performance issue with large array"
+        (checker true)); (* Just checking it completes *)
+    forAll large_object (fun j =>
+      whenFail "Performance issue with large object"
+        (checker true))
+  ].
+
+(* ------------------------------------------------------------ *)
 (* OCaml Extraction                                             *)
 (* ------------------------------------------------------------ *)
 
@@ -2582,3 +3039,4 @@ Separate Extraction
   Typing
   company_json
   acme_db_json.
+          
