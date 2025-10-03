@@ -3272,11 +3272,6 @@ Qed.
 (**
   Linear Query Path Uniqueness: A linear query that returns a result
   returns exactly one, and the path is uniquely determined.
-
-  Non-trivial because:
-  - Stronger than just arity bound (≤1)
-  - Proves syntactic linearity implies semantic uniqueness
-  - Foundation for query inversion/optimization
 *)
 
 Theorem linear_query_unique_path :
