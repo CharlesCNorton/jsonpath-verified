@@ -2182,7 +2182,257 @@ Qed.
 
 End JSONPath_Equiv.
 
-(** * Selector-Level Properties (Filter-Free Fragment) *)
+Lemma Forall_value_ind :
+  forall (P : value -> Prop),
+    (forall b, P (JBool b)) ->
+    (forall n, P (JNum n)) ->
+    (forall s, P (JStr s)) ->
+    P JNull ->
+    (forall xs, Forall P xs -> P (JArr xs)) ->
+    (forall fields, Forall (fun '(k,v) => P v) fields -> P (JObject fields)) ->
+    forall v, P v.
+Proof.
+  intros P HBool HNum HStr HNull HArr HObj.
+  fix IH 1.
+  intros [| b | n | s | xs | fields].
+  - exact HNull.
+  - apply HBool.
+  - apply HNum.
+  - apply HStr.
+  - apply HArr. induction xs as [| x xs' IHxs]; constructor.
+    + apply IH.
+    + apply IHxs.
+  - apply HObj. induction fields as [| [k v] fields' IHfs]; constructor.
+    + apply IH.
+    + apply IHfs.
+Qed.
+
+Lemma visit_df_arr_go_forall2 :
+  forall xs p start,
+    Forall (fun v => forall p0, visit_order (p0, v) (visit_df_value p0 v)) xs ->
+    Forall2 (fun child lst => visit_order child lst)
+      (map (fun '(i, v0) => (List.app p [SIndex (Z.of_nat i)], v0))
+         (combine (seq start (Datatypes.length xs)) xs))
+      (let fix go (i0 : nat) (ys : list value) {struct ys} : list (list node) :=
+         match ys with
+         | [] => []
+         | v' :: ys' => visit_df_value (List.app p [SIndex (Z.of_nat i0)]) v' :: go (S i0) ys'
+         end in go start xs).
+Proof.
+  intros xs p start Hall.
+  revert start. induction Hall as [| x xs' Hx Hall' IH]; intro start; simpl.
+  - constructor.
+  - constructor.
+    + apply Hx.
+    + apply IH.
+Qed.
+
+Lemma visit_df_obj_go_forall2 :
+  forall fields p,
+    Forall (fun '(k, v) => forall p0, visit_order (p0, v) (visit_df_value p0 v)) fields ->
+    Forall2 (fun child lst => visit_order child lst)
+      (map (fun '(k, v0) => (List.app p [SName k], v0)) fields)
+      (let fix go (gs : list (string * value)) {struct gs} : list (list node) :=
+         match gs with
+         | [] => []
+         | (k, v') :: gs' => visit_df_value (List.app p [SName k]) v' :: go gs'
+         end in go fields).
+Proof.
+  intros fields p Hall.
+  induction Hall as [| [k x] fields' Hx Hall' IH]; simpl.
+  - constructor.
+  - constructor.
+    + apply Hx.
+    + apply IH.
+Qed.
+
+Lemma visit_df_value_sound :
+  forall v p,
+    visit_order (p, v) (visit_df_value p v).
+Proof.
+  apply (Forall_value_ind (fun v => forall p, visit_order (p, v) (visit_df_value p v))).
+  - intros b p. apply VisitLeaf; intros; discriminate.
+  - intros n p. apply VisitLeaf; intros; discriminate.
+  - intros s p. apply VisitLeaf; intros; discriminate.
+  - intro p. apply VisitLeaf; intros; discriminate.
+  - intros xs IHxs p. simpl. eapply VisitArray.
+    + reflexivity.
+    + unfold index_zip. apply (visit_df_arr_go_forall2 xs p 0%nat IHxs).
+    + reflexivity.
+  - intros fields IHfields p. simpl. eapply VisitObject.
+    + apply Permutation_refl.
+    + reflexivity.
+    + apply (visit_df_obj_go_forall2 fields p).
+      induction fields as [| [k v] fields' IHf]; constructor.
+      * apply Forall_inv in IHfields. exact IHfields.
+      * apply IHf. apply Forall_inv_tail in IHfields. exact IHfields.
+    + reflexivity.
+Qed.
+
+Lemma visit_df_node_sound :
+  forall n,
+    visit_order n (visit_df_node n).
+Proof.
+  intros [p v]. unfold visit_df_node. apply visit_df_value_sound.
+Qed.
+
+Lemma Permutation_app_cons_comm :
+  forall {A} (l1 l2 : list A) (a : A),
+    Permutation (List.app l1 (a :: l2)) (a :: List.app l1 l2).
+Proof.
+  intros A l1 l2 a.
+  induction l1 as [| x l1' IH]; simpl.
+  - apply Permutation_refl.
+  - transitivity (x :: List.app l1' (a :: l2)).
+    + apply Permutation_refl.
+    + transitivity (x :: a :: List.app l1' l2).
+      * apply perm_skip. exact IH.
+      * apply perm_swap.
+Qed.
+
+Lemma Permutation_in_map :
+  forall {A B} (f : A -> B) (y : B) (xs : list A),
+    In y (map f xs) ->
+    exists x, In x xs /\ f x = y.
+Proof.
+  intros A B f y xs Hin.
+  apply in_map_iff in Hin as [x [Heq Hinx]].
+  exists x. split; [exact Hinx | exact Heq].
+Qed.
+
+Lemma list_split_app :
+  forall {A} (x : A) (xs : list A),
+    In x xs ->
+    exists xs1 xs2, xs = List.app xs1 (x :: xs2).
+Proof.
+  intros A x xs Hin.
+  apply in_split in Hin as [xs1 [xs2 Heq]].
+  exists xs1, xs2. exact Heq.
+Qed.
+
+Lemma Permutation_cons_inv_trans :
+  forall {A} (a : A) (l1 l2 l3 : list A),
+    Permutation (a :: l1) l2 ->
+    Permutation l2 (a :: l3) ->
+    Permutation l1 l3.
+Proof.
+  intros A a l1 l2 l3 H1 H2.
+  apply Permutation_cons_inv with (a := a).
+  transitivity l2; assumption.
+Qed.
+
+Lemma Permutation_map_cons_inv :
+  forall {A B} (f : A -> B) (x : A) (xs ys : list A),
+    Permutation (f x :: map f xs) (map f ys) ->
+    exists (y : A) (ys1 ys2 : list A),
+      ys = List.app ys1 (y :: ys2) /\ f y = f x /\ Permutation (map f xs) (map f (List.app ys1 ys2)).
+Proof.
+  intros A B f x xs ys Hperm.
+  assert (Hin: In (f x) (map f ys)).
+  { eapply Permutation_in; [exact Hperm | left; reflexivity]. }
+  apply Permutation_in_map in Hin as [y [Hiny Heq]].
+  apply list_split_app in Hiny as [ys1 [ys2 Hys]].
+  exists y, ys1, ys2. split; [exact Hys | split; [exact Heq | ]].
+  subst ys. rewrite map_app in Hperm. simpl in Hperm.
+  rewrite Heq in Hperm.
+  apply (Permutation_cons_inv_trans (f x) (map f xs) (List.app (map f ys1) (f x :: map f ys2)) (map f (List.app ys1 ys2))).
+  - exact Hperm.
+  - rewrite map_app. apply Permutation_app_cons_comm.
+Qed.
+
+Lemma visit_order_complete_array_helper_gen :
+  forall p xs start children_lists,
+    Forall2 (fun child lst => visit_order child lst)
+      (map (fun '(i, v) => (List.app p [SIndex (Z.of_nat i)], v))
+        (combine (seq start (Datatypes.length xs)) xs))
+      children_lists ->
+    (forall child lst, visit_order child lst -> Permutation lst (visit_df_value (fst child) (snd child))) ->
+    Permutation (List.concat children_lists)
+      (let fix go (i : nat) (ys : list value) {struct ys} : list (list node) :=
+         match ys with
+         | [] => []
+         | v' :: ys' => visit_df_value (List.app p [SIndex (Z.of_nat i)]) v' :: go (S i) ys'
+         end in List.concat (go start xs)).
+Proof.
+  intros p xs start children_lists HF2 IH.
+  revert start children_lists HF2.
+  induction xs as [| x xs' IHxs]; intros start cls HF2.
+  - inversion HF2; subst. apply Permutation_refl.
+  - inversion HF2; subst. simpl.
+    apply Permutation_app.
+    + specialize (IH _ _ H1). simpl in IH. exact IH.
+    + apply (IHxs (S start) l' H3).
+Qed.
+
+Lemma visit_order_complete_array_helper :
+  forall p xs children children_lists,
+    children = map (fun '(i, v) => (List.app p [SIndex (Z.of_nat i)], v)) (index_zip xs) ->
+    Forall2 (fun child lst => visit_order child lst) children children_lists ->
+    (forall child lst, visit_order child lst -> Permutation lst (visit_df_value (fst child) (snd child))) ->
+    Permutation (List.concat children_lists)
+      (let fix go (i : nat) (ys : list value) {struct ys} : list (list node) :=
+         match ys with
+         | [] => []
+         | v' :: ys' => visit_df_value (List.app p [SIndex (Z.of_nat i)]) v' :: go (S i) ys'
+         end in List.concat (go 0%nat xs)).
+Proof.
+  intros p xs children children_lists Hch HF2 IH.
+  subst children.
+  unfold index_zip in HF2.
+  apply (visit_order_complete_array_helper_gen p xs 0%nat children_lists HF2 IH).
+Qed.
+
+Lemma Forall2_app_split_l :
+  forall {A B} (R : A -> B -> Prop) (l1 l2 : list A) (l : list B),
+    Forall2 R (l1 ++ l2)%list l ->
+    exists (r1 r2 : list B), l = (r1 ++ r2)%list /\ Forall2 R l1 r1 /\ Forall2 R l2 r2.
+Proof.
+  intros A B R l1 l2 l H.
+  revert l H.
+  induction l1 as [| a l1' IH]; intros l H.
+  - exists [], l. simpl. split; [reflexivity | split; [constructor | exact H]].
+  - inversion H; subst.
+    specialize (IH _ H4) as [r1 [r2 [Heq [HF1 HF2]]]].
+    exists (y :: r1)%list, r2. subst l'. split; [reflexivity | split; [constructor; assumption | exact HF2]].
+Qed.
+
+Lemma visit_order_complete_object_helper :
+  forall p fs children children_lists,
+    Permutation children (map (fun '(k, v) => (List.app p [SName k], v)) fs) ->
+    Forall2 (fun child lst => visit_order child lst) children children_lists ->
+    (forall child lst, visit_order child lst -> Permutation lst (visit_df_value (fst child) (snd child))) ->
+    Permutation (List.concat children_lists)
+      (let fix go (gs : list (string * value)) {struct gs} : list (list node) :=
+         match gs with
+         | [] => []
+         | (k, v') :: gs' => visit_df_value (List.app p [SName k]) v' :: go gs'
+         end in List.concat (go fs)).
+Proof.
+  intros p fs children children_lists Hperm HF2 IH.
+  transitivity (List.concat (map (fun child => visit_df_value (fst child) (snd child)) children)).
+  - assert (HF2': Forall2 (fun lst child => Permutation lst (visit_df_value (fst child) (snd child)))
+                          children_lists children).
+    { clear Hperm. induction HF2; constructor; [apply IH; exact H | apply IHHF2; exact IH]. }
+    clear HF2 IH Hperm.
+    induction HF2' as [| lst child lists children Hp HF2' IHHF2'].
+    + apply Permutation_refl.
+    + simpl. apply Permutation_app; [exact Hp | exact IHHF2'].
+  - transitivity (List.concat (map (fun child => visit_df_value (fst child) (snd child))
+                                   (map (fun '(k, v) => (List.app p [SName k], v)) fs))).
+    + assert (Hmap: Permutation (map (fun child => visit_df_value (fst child) (snd child)) children)
+                                (map (fun child => visit_df_value (fst child) (snd child))
+                                     (map (fun '(k, v) => (List.app p [SName k], v)) fs))).
+      { apply Permutation_map. exact Hperm. }
+      clear Hperm. induction Hmap.
+      * apply Permutation_refl.
+      * simpl. apply Permutation_app_head. exact IHHmap.
+      * simpl. repeat rewrite app_assoc. apply Permutation_app_tail. apply Permutation_app_comm.
+      * transitivity (List.concat l'); assumption.
+    + clear Hperm HF2 IH children children_lists.
+      induction fs as [| [k v] fs' IHfs].
+      * apply Permutation_refl.
+      * simpl. apply Permutation_app_head. exact IHfs.
+Qed.
 
 Import JSON JSONPath Exec JSONPath_Equiv.
 
