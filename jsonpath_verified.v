@@ -16,9 +16,11 @@ Open Scope Z_scope.
 (* Utilities                                                    *)
 (* ------------------------------------------------------------ *)
 
+(** Decidable equality on strings as a boolean function. *)
 Definition string_eqb (s1 s2 : string) : bool :=
   if string_dec s1 s2 then true else false.
 
+(** Correctness: string_eqb reflects propositional equality. *)
 Lemma string_eqb_true_iff :
   forall s1 s2, string_eqb s1 s2 = true <-> s1 = s2.
 Proof.
@@ -30,19 +32,23 @@ Proof.
   - exfalso; apply Hneq; assumption.
 Qed.
 
+(** Pair each element with its 0-indexed position. *)
 Definition index_zip {A} (xs : list A) : list (nat * A) :=
   combine (seq 0 (List.length xs)) xs.
 
-(* ASCII-based lexicographic order for strings *)
+(** Decidable equality on ASCII characters. *)
 Definition ascii_eqb (a b:ascii) : bool :=
   if ascii_dec a b then true else false.
 
+(** Strict ordering on ASCII by codepoint value. *)
 Definition ascii_ltb (a b:ascii) : bool :=
   Nat.ltb (nat_of_ascii a) (nat_of_ascii b).
 
+(** Non-strict ordering on ASCII by codepoint value. *)
 Definition ascii_leb (a b:ascii) : bool :=
   negb (ascii_ltb b a).
 
+(** Lexicographic strict ordering on strings. *)
 Fixpoint str_ltb (s1 s2:string) : bool :=
   match s1, s2 with
   | EmptyString, EmptyString => false
@@ -54,24 +60,30 @@ Fixpoint str_ltb (s1 s2:string) : bool :=
       else false
   end.
 
+(** Lexicographic non-strict ordering on strings. *)
 Definition str_leb (s1 s2:string) : bool :=
   orb (string_eqb s1 s2) (str_ltb s1 s2).
 
-(* Q helpers *)
+(** Decidable equality on rationals. *)
 Definition Qeqb (x y:Q) : bool :=
   match Qcompare x y with
   | Eq => true | _ => false
   end.
 
+(** Strict ordering on rationals. *)
 Definition Qltb (x y:Q) : bool :=
   match Qcompare x y with
   | Lt => true | _ => false
   end.
 
+(** Non-strict ordering on rationals. *)
 Definition Qleb (x y:Q) : bool :=
   negb (Qltb y x).
 
+(** Injection from integers to rationals. *)
 Definition Q_of_Z (z:Z) : Q := inject_Z z.
+
+(** Injection from naturals to rationals. *)
 Definition Q_of_nat (n:nat) : Q := inject_Z (Z.of_nat n).
 
 
@@ -81,19 +93,27 @@ Definition Q_of_nat (n:nat) : Q := inject_Z (Z.of_nat n).
 (* ------------------------------------------------------------ *)
 
 Module JSON.
+
+(** JSON value AST: null, booleans, rationals, strings, arrays, objects. *)
 Inductive value :=
 | JNull
 | JBool (b:bool)
 | JNum (n: Q)
 | JStr (s:string)
 | JArr (xs:list value)
-| JObject (fields: list (string * value)).  (* RFC: member order not stipulated *)
+| JObject (fields: list (string * value)).
 
+(** Path component: object key or array index. *)
 Inductive step := SName (s:string) | SIndex (i:Z).
+
+(** Path: sequence of steps from document root. *)
 Definition path := list step.
+
+(** Node: path-value pair representing a location in a JSON document. *)
 Definition node := (path * value)%type.
 End JSON.
 
+(** Constructor for nodes from path and value. *)
 Definition mk_node (p:JSON.path) (v:JSON.value) : JSON.node := (p, v).
 
 (* ------------------------------------------------------------ *)
@@ -103,12 +123,14 @@ Definition mk_node (p:JSON.path) (v:JSON.value) : JSON.node := (p, v).
 Module JSONPath.
 Import JSON.
 
+(** Primitive value constants: subset of JSON values usable in filter expressions. *)
 Inductive prim :=
 | PNull
 | PBool (b:bool)
 | PNum (n:Q)
 | PStr (s:string).
 
+(** Extract primitive from JSON value, returning None for structured values. *)
 Definition prim_of_value (v:value) : option prim :=
   match v with
   | JNull => Some PNull
@@ -118,9 +140,10 @@ Definition prim_of_value (v:value) : option prim :=
   | _ => None
   end.
 
+(** Comparison operators for filter expressions. *)
 Inductive cmp := CEq | CNe | CLt | CLe | CGt | CGe.
 
-(* Minimal regex AST for ASCII strings *)
+(** Regular expression AST for string pattern matching (Brzozowski derivatives). *)
 Inductive regex :=
 | REmpty
 | REps
@@ -130,11 +153,14 @@ Inductive regex :=
 | RCat (r1 r2:regex)
 | RStar (r:regex).
 
+(** Arithmetic expressions: evaluate to primitives in filter contexts. *)
 Inductive aexpr :=
 | APrim (p:prim)
 | ACount (q:query)
 | AValue (q:query)
 | ALengthV (q:query)
+
+(** Filter expressions: boolean predicates over nodes. *)
 with fexpr :=
 | FTrue
 | FNot (f:fexpr)
@@ -142,19 +168,26 @@ with fexpr :=
 | FOr  (f g:fexpr)
 | FExists (q:query)
 | FCmp (op:cmp) (a b:aexpr)
-| FMatch (a:aexpr) (r:regex)   (* full match *)
-| FSearch (a:aexpr) (r:regex)  (* substring search *)
+| FMatch (a:aexpr) (r:regex)
+| FSearch (a:aexpr) (r:regex)
+
+(** Selector: specifies which children of a node to select. *)
 with selector :=
 | SelName (s:string)
 | SelWildcard
 | SelIndex (i:Z)
 | SelSlice (start end_ : option Z) (stp: Z)
 | SelFilter (f:fexpr)
+
+(** Segment: child or descendant step with multiple selectors. *)
 with segment :=
 | Child (sels: list selector)
 | Desc (sels: list selector)
+
+(** Query: sequence of segments forming a JSONPath expression. *)
 with query := Query (segs : list segment).
 
+(** Extract segment list from query. *)
 Definition q_segs (q:query) : list segment :=
   match q with Query ss => ss end.
 
@@ -166,8 +199,10 @@ Import JSON JSONPath.
 (* Slice helpers                                                *)
 (* ------------------------------------------------------------ *)
 
+(** Clamp integer x to closed interval [lo, hi]. *)
 Definition clamp (x lo hi : Z) : Z := Z.max lo (Z.min hi x).
 
+(** Normalize slice parameters to absolute bounds per RFC 9535 semantics. *)
 Definition normalize_slice_bounds (len: nat) (start endo: option Z) (stp: Z)
   : Z * Z * Z :=
   let lz := Z.of_nat len in
@@ -188,6 +223,7 @@ Definition normalize_slice_bounds (len: nat) (start endo: option Z) (stp: Z)
      else (clamp s0 (-1) (lz - 1), clamp e0 (-1) (lz - 1)) in
   (s1, e1, stp).
 
+(** Generate arithmetic sequence [i, i+step, ...) while i < stop, with fuel. *)
 Fixpoint up_by (i stop step : Z) (fuel:nat) : list Z :=
   match fuel with
   | O => []
@@ -197,6 +233,7 @@ Fixpoint up_by (i stop step : Z) (fuel:nat) : list Z :=
       else []
   end.
 
+(** Generate descending sequence [i, i+step, ...) while stop < i, with fuel. *)
 Fixpoint down_by (i stop step : Z) (fuel:nat) : list Z :=
   match fuel with
   | O => []
@@ -206,6 +243,7 @@ Fixpoint down_by (i stop step : Z) (fuel:nat) : list Z :=
       else []
   end.
 
+(** Compute natural-number indices selected by slice [start:end:step]. *)
 Definition slice_positions (len:nat) (start endo: option Z) (stp:Z) : list nat :=
   let '(s, e, st) := normalize_slice_bounds len start endo stp in
   if Z.eqb st 0 then []
@@ -221,6 +259,7 @@ Definition slice_positions (len:nat) (start endo: option Z) (stp:Z) : list nat :
          if (0 <=? z)%Z && (z <? lz)%Z then Z.to_nat z :: acc else acc)
       [] zs.
 
+(** Indexing with default value for out-of-bounds access. *)
 Fixpoint nth_default (d:JSON.value) (xs:list JSON.value) (n:nat) : JSON.value :=
   match xs, n with
   | [], _ => d
@@ -228,6 +267,7 @@ Fixpoint nth_default (d:JSON.value) (xs:list JSON.value) (n:nat) : JSON.value :=
   | _::xs', S n' => nth_default d xs' n'
   end.
 
+(** nth_error and nth_default agree when default is JNull. *)
 Lemma nth_error_default_eq :
   forall (xs:list JSON.value) n,
     (match List.nth_error xs n with
@@ -242,6 +282,7 @@ Qed.
 (* Helper functions for relational semantics                    *)
 (* ------------------------------------------------------------ *)
 
+(** Nullability: does regex accept the empty string? *)
 Fixpoint nullable (r:regex) : bool :=
   match r with
   | REmpty => false
@@ -253,6 +294,7 @@ Fixpoint nullable (r:regex) : bool :=
   | RStar _ => true
   end.
 
+(** Brzozowski derivative: regex accepting suffixes after consuming character a. *)
 Fixpoint deriv (a:ascii) (r:regex) : regex :=
   match r with
   | REmpty => REmpty
@@ -267,6 +309,7 @@ Fixpoint deriv (a:ascii) (r:regex) : regex :=
   | RStar r1 => RCat (deriv a r1) (RStar r1)
   end.
 
+(** Simplify regex by removing identities and absorbing elements. *)
 Fixpoint rsimpl (r:regex) : regex :=
   match r with
   | RAlt r1 r2 =>
@@ -296,27 +339,33 @@ Fixpoint rsimpl (r:regex) : regex :=
   | _ => r
   end.
 
+(** Simplified derivative: deriv followed by normalization. *)
 Definition deriv_simpl (a:ascii) (r:regex) : regex :=
   rsimpl (deriv a r).
 
+(** Convert string to list of ASCII characters. *)
 Fixpoint list_of_string (s:string) : list ascii :=
   match s with
   | EmptyString => []
   | String a s' => a :: list_of_string s'
   end.
 
+(** Incremental matching via successive derivatives. *)
 Fixpoint matches_from (r:regex) (cs:list ascii) : bool :=
   match cs with
   | [] => nullable r
   | a::cs' => matches_from (deriv_simpl a r) cs'
   end.
 
+(** Full-string regex match. *)
 Definition regex_match (r:regex) (s:string) : bool :=
   matches_from r (list_of_string s).
 
+(** Substring search: match r anywhere within s. *)
 Definition regex_search (r:regex) (s:string) : bool :=
   regex_match (RCat (RStar RAny) (RCat r (RStar RAny))) s.
 
+(** Primitive equality: structural equality on comparable types. *)
 Definition prim_eq (p q:prim) : bool :=
   match p, q with
   | PNull, PNull => true
@@ -326,6 +375,7 @@ Definition prim_eq (p q:prim) : bool :=
   | _, _ => false
   end.
 
+(** Primitive ordering: defined for numbers and strings only. *)
 Definition prim_lt (p q:prim) : bool :=
   match p, q with
   | PNum n1, PNum n2 => Qltb n1 n2
@@ -333,6 +383,7 @@ Definition prim_lt (p q:prim) : bool :=
   | _ , _ => false
   end.
 
+(** Comparison dispatch for all six relational operators. *)
 Definition cmp_prim (op:cmp) (x y:prim) : bool :=
   match op with
   | CEq => prim_eq x y
@@ -343,6 +394,7 @@ Definition cmp_prim (op:cmp) (x y:prim) : bool :=
   | CGe => orb (prim_lt y x) (prim_eq x y)
   end.
 
+(** Extract primitive from JSON value (duplicated for relational context). *)
 Definition prim_of_value (v:value) : option prim :=
   match v with
   | JNull => Some PNull
@@ -353,6 +405,7 @@ Definition prim_of_value (v:value) : option prim :=
   | JObject _ => None
   end.
 
+(** Parameterized boolean filter evaluation (unused in final semantics). *)
 Fixpoint holds_b_simple (eval_func: query -> value -> list node)
                         (aeval_func: aexpr -> value -> option prim)
                         (f:fexpr) (n:node) {struct f} : bool :=
@@ -385,6 +438,7 @@ Fixpoint holds_b_simple (eval_func: query -> value -> list node)
 (* Relational semantics                                         *)
 (* ------------------------------------------------------------ *)
 
+(** Selector evaluation: single-step child selection from a node. *)
 Inductive eval_selector : selector -> JSON.node -> list JSON.node -> Prop :=
 
 | EvalSelName :
@@ -445,6 +499,7 @@ Inductive eval_selector : selector -> JSON.node -> list JSON.node -> Prop :=
              (slice_positions (List.length xs) start end_ stp))
 
 
+(** Document-order traversal: enumerate all descendant nodes depth-first. *)
 with visit_order : JSON.node -> list JSON.node -> Prop :=
 | VisitLeaf :
     forall p v,
@@ -465,6 +520,7 @@ with visit_order : JSON.node -> list JSON.node -> Prop :=
       nodes = (p, JObject fs) :: List.concat children_lists ->
       visit_order (p, JObject fs) nodes
 
+(** Segment evaluation: apply child or descendant selectors. *)
 with eval_seg : segment -> JSON.node -> list JSON.node -> Prop :=
 | EvalSegChild :
     forall sels n results,
@@ -479,6 +535,7 @@ with eval_seg : segment -> JSON.node -> list JSON.node -> Prop :=
       results = List.concat per_results ->
       eval_seg (Desc sels) n results
 
+(** Multi-segment evaluation: thread node lists through successive segments. *)
 with eval_rest_on_nodes : list segment -> list JSON.node -> list JSON.node -> Prop :=
 | EvalRestEmpty : forall ns, eval_rest_on_nodes [] ns ns
 | EvalRestCons  : forall seg rest ns inter finals,
@@ -488,11 +545,13 @@ with eval_rest_on_nodes : list segment -> list JSON.node -> list JSON.node -> Pr
     eval_rest_on_nodes rest inter finals ->
     eval_rest_on_nodes (seg :: rest) ns finals
 
+(** Top-level query evaluation from document root. *)
 with eval : query -> JSON.value -> list JSON.node -> Prop :=
 | EvalQuery : forall segs J results,
     eval_rest_on_nodes segs [([], J)] results ->
     eval (Query segs) J results
 
+(** Arithmetic expression evaluation to primitives in filter context. *)
 with aeval_rel : aexpr -> value -> prim -> Prop :=
 | AevalPrim :
     forall v p,
@@ -524,6 +583,7 @@ with aeval_rel : aexpr -> value -> prim -> Prop :=
       eval q v [(p', JObject fs)] ->
       aeval_rel (ALengthV q) v (PNum (Q_of_nat (List.length fs)))
 
+(** Filter predicate satisfaction: when a node satisfies a boolean filter. *)
 with holds : fexpr -> JSON.node -> Prop :=
 | HoldsTrue :
     forall n,
@@ -578,9 +638,11 @@ with holds : fexpr -> JSON.node -> Prop :=
 (* Regex engine (ASCII)                                         *)
 (* ------------------------------------------------------------ *)
 
+(** Encapsulated regex module for extraction (duplicate definitions from helpers). *)
 Module Regex.
 Import JSONPath.
 
+(** Nullability (module-scoped duplicate). *)
 Fixpoint nullable (r:regex) : bool :=
   match r with
   | REmpty => false
@@ -592,6 +654,7 @@ Fixpoint nullable (r:regex) : bool :=
   | RStar _ => true
   end.
 
+(** Brzozowski derivative (module-scoped duplicate). *)
 Fixpoint deriv (a:ascii) (r:regex) : regex :=
   match r with
   | REmpty => REmpty
@@ -606,6 +669,7 @@ Fixpoint deriv (a:ascii) (r:regex) : regex :=
   | RStar r1 => RCat (deriv a r1) (RStar r1)
   end.
 
+(** Regex simplification (module-scoped duplicate). *)
 Fixpoint rsimpl (r:regex) : regex :=
   match r with
   | RAlt r1 r2 =>
@@ -635,25 +699,29 @@ Fixpoint rsimpl (r:regex) : regex :=
   | _ => r
   end.
 
+(** Simplified derivative (module-scoped duplicate). *)
 Definition deriv_simpl (a:ascii) (r:regex) : regex :=
   rsimpl (deriv a r).
 
+(** String to character list (module-scoped duplicate). *)
 Fixpoint list_of_string (s:string) : list ascii :=
   match s with
   | EmptyString => []
   | String a s' => a :: list_of_string s'
   end.
 
+(** Incremental matching (module-scoped duplicate). *)
 Fixpoint matches_from (r:regex) (cs:list ascii) : bool :=
   match cs with
   | [] => nullable r
   | a::cs' => matches_from (deriv_simpl a r) cs'
   end.
 
+(** Full-string match (module-scoped duplicate). *)
 Definition regex_match (r:regex) (s:string) : bool :=
   matches_from r (list_of_string s).
 
-(* search = .* r .* *)
+(** Substring search (module-scoped duplicate). *)
 Definition regex_search (r:regex) (s:string) : bool :=
   regex_match (RCat (RStar RAny) (RCat r (RStar RAny))) s.
 
@@ -663,11 +731,11 @@ End Regex.
 (* Executable semantics (filters enabled)                       *)
 (* ------------------------------------------------------------ *)
 
+(** Executable evaluation module with full filter support. *)
 Module Exec.
 Import JSON JSONPath Regex.
 
-(* Primitive comparisons *)
-
+(** Primitive equality (exec-scoped). *)
 Definition prim_eq (p q:prim) : bool :=
   match p, q with
   | PNull, PNull => true
@@ -677,6 +745,7 @@ Definition prim_eq (p q:prim) : bool :=
   | _, _ => false
   end.
 
+(** Primitive ordering (exec-scoped). *)
 Definition prim_lt (p q:prim) : bool :=
   match p, q with
   | PNum n1, PNum n2 => Qltb n1 n2
@@ -684,6 +753,7 @@ Definition prim_lt (p q:prim) : bool :=
   | _ , _ => false
   end.
 
+(** Comparison dispatch (exec-scoped). *)
 Definition cmp_prim (op:cmp) (x y:prim) : bool :=
   match op with
   | CEq => prim_eq x y
@@ -694,8 +764,7 @@ Definition cmp_prim (op:cmp) (x y:prim) : bool :=
   | CGe => orb (prim_lt y x) (prim_eq x y)
   end.
 
-(* Selector evaluator without filters *)
-
+(** Filter-free selector evaluator (no SelFilter support). *)
 Fixpoint sel_exec_nf (sel:selector) (n:JSON.node) : list JSON.node :=
   match n with
   | (p, v) =>
@@ -735,8 +804,7 @@ Fixpoint sel_exec_nf (sel:selector) (n:JSON.node) : list JSON.node :=
     end
   end.
 
-(* Document-order DFS visit *)
-
+(** Document-order depth-first traversal of a value. *)
 Fixpoint visit_df_value (p:JSON.path) (v:JSON.value) {struct v} : list JSON.node :=
   match v with
   | JArr xs =>
@@ -764,17 +832,19 @@ Fixpoint visit_df_value (p:JSON.path) (v:JSON.value) {struct v} : list JSON.node
   | _ => [ mk_node p v ]
   end.
 
+(** Wrapper for node-based traversal. *)
 Definition visit_df_node (n:JSON.node) : list JSON.node :=
   let '(p,v) := n in visit_df_value p v.
 
-(* Generic engine parameterized by a selector implementation *)
-
+(** Parameterized evaluation engine (abstracted over selector implementation). *)
 Section Engine.
   Variable sel_impl : selector -> JSON.node -> list JSON.node.
 
+  (** Apply selectors to single node, concatenating results. *)
   Definition child_on_node_impl (sels:list selector) (n:JSON.node) : list JSON.node :=
     List.concat (map (fun s => sel_impl s n) sels).
 
+  (** Evaluate segment: child or descendant. *)
   Definition seg_exec_impl (seg:segment) (n:JSON.node) : list JSON.node :=
     match seg with
     | Child sels => child_on_node_impl sels n
@@ -783,24 +853,25 @@ Section Engine.
         List.concat (map (child_on_node_impl sels) visited)
     end.
 
+  (** Thread node list through segment sequence. *)
   Fixpoint segs_exec_impl (segs:list segment) (ns:list JSON.node) : list JSON.node :=
     match segs with
     | [] => ns
     | s::ss => segs_exec_impl ss (List.concat (map (seg_exec_impl s) ns))
     end.
 
+  (** Top-level query evaluator from document root. *)
   Definition eval_exec_impl (q:query) (J:value) : list JSON.node :=
     segs_exec_impl (q_segs q) [([], J)].
 End Engine.
 
-(* nf-instance engine (no filters) *)
+(** Filter-free engine instances. *)
 Definition child_on_node_nf := child_on_node_impl sel_exec_nf.
 Definition seg_exec_nf     := seg_exec_impl     sel_exec_nf.
 Definition segs_exec_nf    := segs_exec_impl    sel_exec_nf.
 Definition eval_exec_nf    := eval_exec_impl    sel_exec_nf.
 
-(* Full engine with filters *)
-
+(** Full selector evaluator with filter support (mutually recursive with holds_b/aeval). *)
 Fixpoint sel_exec (sel:selector) (n:JSON.node) {struct sel} : list JSON.node :=
   match sel, n with
   | SelFilter f, (p, JObject fields) =>
@@ -851,6 +922,7 @@ Fixpoint sel_exec (sel:selector) (n:JSON.node) {struct sel} : list JSON.node :=
   | SelSlice _ _ _, (_, _) => []
   end
 
+(** Boolean filter evaluation (mutually recursive). *)
 with holds_b (f:fexpr) (n:JSON.node) {struct f} : bool :=
   let '(_,v) := n in
   match f with
@@ -877,6 +949,7 @@ with holds_b (f:fexpr) (n:JSON.node) {struct f} : bool :=
       end
   end
 
+(** Arithmetic expression evaluation (mutually recursive). *)
 with aeval (a:aexpr) (v:value) {struct a} : option prim :=
   match a with
   | APrim p => Some p
@@ -899,6 +972,7 @@ with aeval (a:aexpr) (v:value) {struct a} : option prim :=
       end
   end.
 
+(** Full engine instances with filter support. *)
 Definition child_on_node := child_on_node_impl sel_exec.
 Definition seg_exec     := seg_exec_impl     sel_exec.
 Definition segs_exec    := segs_exec_impl    sel_exec.
@@ -910,24 +984,28 @@ End Exec.
 (* Static well-formedness checks (conservative)                 *)
 (* ------------------------------------------------------------ *)
 
+(** Conservative static type checking for filter expressions. *)
 Module Typing.
 Import JSON JSONPath.
 
+(** Primitive type tags for conservative analysis. *)
 Inductive primty := TNull | TBool | TNum | TStr | TAnyPrim.
 
+(** Selector is simple (name or index only). *)
 Definition selector_ok (sel:selector) : bool :=
   match sel with
   | SelName _ | SelIndex _ => true
   | _ => false
   end.
 
+(** Segment is child-only with simple selectors. *)
 Definition segment_ok (s:segment) : bool :=
   match s with
   | Child sels => forallb selector_ok sels
   | Desc _ => false
   end.
 
-(* Chains of Child with only SelName/SelIndex *)
+(** Query is a non-empty chain of simple child segments. *)
 Definition singleton_query (q:query) : bool :=
   match q with
   | Query segs =>
@@ -937,6 +1015,7 @@ Definition singleton_query (q:query) : bool :=
       end
   end.
 
+(** Infer conservative primitive type from arithmetic expression. *)
 Definition aety (a:aexpr) : primty :=
   match a with
   | APrim PNull      => TNull
@@ -948,6 +1027,7 @@ Definition aety (a:aexpr) : primty :=
   | AValue _         => TAnyPrim
   end.
 
+(** Type compatibility for comparisons. *)
 Definition comparable (t1 t2:primty) : bool :=
   match t1, t2 with
   | TNull, TNull => true
@@ -959,6 +1039,7 @@ Definition comparable (t1 t2:primty) : bool :=
   | _ , _        => false
   end.
 
+(** Well-formedness check for filter expressions (conservative). *)
 Fixpoint wf_fexpr (f:fexpr) : bool :=
   match f with
   | FTrue => true
@@ -979,6 +1060,7 @@ End Typing.
 (* Bridge lemma: selector -> Child [selector]                   *)
 (* ------------------------------------------------------------ *)
 
+(** Lift single selector evaluation to segment evaluation. *)
 Lemma eval_child_single_selector :
   forall sel n res,
     eval_selector sel n res ->
@@ -997,10 +1079,10 @@ Qed.
 
 Import Exec.
 
+(** Shorthand for numeric JSON values. *)
 Definition JQ (z:Z) : JSON.value := JSON.JNum (Q_of_Z z).
 
-(* Basic selectors *)
-
+(** Name selector on object retrieves specified field. *)
 Example test_name_selector :
   let json := JObject [("a", JQ 1); ("b", JQ 2)] in
   exists result, eval (Query [Child [SelName "a"]]) json result /\
@@ -1018,6 +1100,7 @@ Proof.
   - constructor.
 Qed.
 
+(** Index selector accesses array element by position. *)
 Example test_index_selector :
   let json := JArr [JQ 10; JQ 20; JQ 30] in
   exists result, eval (Query [Child [SelIndex 1]]) json result /\
@@ -1035,6 +1118,7 @@ Proof.
   - constructor.
 Qed.
 
+(** Negative indices count from end of array. *)
 Example test_negative_index :
   let json := JArr [JQ 10; JQ 20; JQ 30] in
   exists result, eval (Query [Child [SelIndex (-1)]]) json result /\
@@ -1052,6 +1136,7 @@ Proof.
   - constructor.
 Qed.
 
+(** Wildcard selects all object fields. *)
 Example test_wildcard_object :
   let json := JObject [("a", JQ 1); ("b", JQ 2)] in
   exists result, eval (Query [Child [SelWildcard]]) json result /\
@@ -1069,6 +1154,7 @@ Proof.
   - constructor.
 Qed.
 
+(** Wildcard selects all array elements. *)
 Example test_wildcard_array :
   let json := JArr [JQ 10; JQ 20] in
   exists result, eval (Query [Child [SelWildcard]]) json result /\
@@ -1086,6 +1172,7 @@ Proof.
   - constructor.
 Qed.
 
+(** Wildcard on empty object returns empty list. *)
 Example test_wildcard_empty_object :
   let json := JObject [] in
   exists result, eval (Query [Child [SelWildcard]]) json result /\
@@ -1103,6 +1190,7 @@ Proof.
   - constructor.
 Qed.
 
+(** Wildcard on empty array returns empty list. *)
 Example test_wildcard_empty_array :
   let json := JArr [] in
   exists result, eval (Query [Child [SelWildcard]]) json result /\
@@ -1120,6 +1208,7 @@ Proof.
   - constructor.
 Qed.
 
+(** Multi-segment query chains navigation through nested structures. *)
 Example test_multi_segment :
   let json := JObject [("users", JArr [
                          JObject [("name", JStr "alice"); ("age", JQ 30)];
@@ -1156,42 +1245,45 @@ Proof.
       * constructor.
 Qed.
 
+(** Empty query returns root node only. *)
 Theorem empty_query_returns_root : forall J,
   eval (Query []) J [([], J)].
 Proof. intros. constructor. constructor. Qed.
 
-(* Slices *)
-
+(** Slice with positive step selects subrange [start, end). *)
 Example exec_slice_pos :
   let j := JArr [JQ 0; JQ 1; JQ 2; JQ 3] in
   eval_exec (Query [Child [SelSlice (Some 1) (Some 3) 1]]) j
   = [ ([SIndex 1], JQ 1) ; ([SIndex 2], JQ 2) ].
 Proof. reflexivity. Qed.
 
+(** Negative step reverses iteration order. *)
 Example exec_slice_neg_step_all :
   let j := JArr [JQ 10; JQ 20; JQ 30] in
   eval_exec (Query [Child [SelSlice None None (-1)]]) j
   = [ ([SIndex 2], JQ 30) ; ([SIndex 1], JQ 20) ; ([SIndex 0], JQ 10) ].
 Proof. reflexivity. Qed.
 
+(** Zero step yields empty slice per RFC 9535. *)
 Example exec_slice_zero_step_is_empty :
   let j := JArr [JQ 10; JQ 20] in
   eval_exec (Query [Child [SelSlice None None 0]]) j = [].
 Proof. reflexivity. Qed.
 
+(** Negative start bound converted relative to length. *)
 Example exec_slice_mixed_bounds :
   let j := JArr [JQ 0; JQ 1; JQ 2; JQ 3; JQ 4] in
   eval_exec (Query [Child [SelSlice (Some (-3)) None 1]]) j
   = [ ([SIndex 2], JQ 2) ; ([SIndex 3], JQ 3) ; ([SIndex 4], JQ 4) ].
 Proof. reflexivity. Qed.
 
-(* Filters *)
-
+(** Filter comparing nested field value against threshold. *)
 Definition f_age_gt_21 : selector :=
   SelFilter (FCmp CGt
                  (AValue (Query [Child [SelName "age"]]))
                  (APrim (PNum (Q_of_Z 21)))).
 
+(** Filter retains only array elements satisfying age > 21. *)
 Example exec_filter_age_gt_21 :
   let j :=
     JArr [
@@ -1206,9 +1298,11 @@ Example exec_filter_age_gt_21 :
     ].
 Proof. reflexivity. Qed.
 
+(** Filter checking field existence (non-empty query result). *)
 Definition f_exists_age : selector :=
   SelFilter (FExists (Query [Child [SelName "age"]])).
 
+(** Existential filter retains nodes with specified field. *)
 Example exec_filter_exists_age :
   let j :=
     JArr [
@@ -1223,11 +1317,13 @@ Example exec_filter_exists_age :
     ].
 Proof. reflexivity. Qed.
 
+(** Filter using count aggregation on nested array length. *)
 Definition f_tags_count_ge_2 : selector :=
   SelFilter (FCmp CGe
                  (ACount (Query [Child [SelName "tags"]; Child [SelWildcard]]))
                  (APrim (PNum (Q_of_Z 2)))).
 
+(** Count-based filter retains nodes with array length >= threshold. *)
 Example exec_filter_count_ge_2 :
   let j :=
     JArr [
@@ -1243,11 +1339,13 @@ Example exec_filter_count_ge_2 :
     ].
 Proof. reflexivity. Qed.
 
+(** Filter using length function on current node string value. *)
 Definition f_len_gt_3 : selector :=
   SelFilter (FCmp CGt
                  (ALengthV (Query []))
                  (APrim (PNum (Q_of_Z 3)))).
 
+(** Length filter retains strings longer than threshold. *)
 Example exec_filter_length_gt_3_on_array_of_strings :
   let j := JArr [JStr "a"; JStr "abcd"; JStr "xyz"; JStr "hello"] in
   eval_exec (Query [Child [f_len_gt_3]]) j
@@ -1257,8 +1355,7 @@ Example exec_filter_length_gt_3_on_array_of_strings :
     ].
 Proof. reflexivity. Qed.
 
-(* Descendant semantics *)
-
+(** Descendant segment searches all depths, collecting matching nodes. *)
 Example exec_desc_name_at_any_depth :
   let j :=
     JObject [("u", JObject [("name", JStr "alice"); ("meta", JObject [("name", JStr "x")])]);
@@ -1271,27 +1368,30 @@ Example exec_desc_name_at_any_depth :
     ].
 Proof. reflexivity. Qed.
 
-(* Regex utilities *)
-
+(** Regex matching literal string "hello". *)
 Definition re_hello : regex :=
   RCat (RChr "h"%char)
     (RCat (RChr "e"%char)
      (RCat (RChr "l"%char)
       (RCat (RChr "l"%char) (RChr "o"%char)))).
 
+(** Filter requiring full string match against regex. *)
 Definition f_str_match_hello : selector :=
   SelFilter (FMatch (AValue (Query [])) re_hello).
 
+(** Filter searching for substring pattern "ll". *)
 Definition f_str_search_ll : selector :=
   SelFilter (FSearch (AValue (Query []))
                      (RCat (RChr "l"%char) (RChr "l"%char))).
 
+(** Full-string regex match retains exact matches only. *)
 Example exec_regex_match_full :
   let j := JArr [JStr "hello"; JStr "hell"; JStr "oh hello!"] in
   eval_exec (Query [Child [f_str_match_hello]]) j
   = [ ([SIndex 0], JStr "hello") ].
 Proof. reflexivity. Qed.
 
+(** Substring search finds pattern anywhere within string. *)
 Example exec_regex_search_substring :
   let j := JArr [JStr "hello"; JStr "hell"; JStr "oh hello!"] in
   eval_exec (Query [Child [f_str_search_ll]]) j
@@ -1302,23 +1402,25 @@ Example exec_regex_search_substring :
     ].
 Proof. reflexivity. Qed.
 
-(* Edge cases *)
-
+(** Name selector on non-object yields empty result. *)
 Example exec_name_on_non_object :
   let j := JQ 0 in
   eval_exec (Query [Child [SelName "a"]]) j = [].
 Proof. reflexivity. Qed.
 
+(** Index selector on non-array yields empty result. *)
 Example exec_index_on_non_array :
   let j := JObject [("a", JQ 1)] in
   eval_exec (Query [Child [SelIndex 0]]) j = [].
 Proof. reflexivity. Qed.
 
+(** Wildcard on scalar (non-structured) value yields empty result. *)
 Example exec_wildcard_on_scalar :
   let j := JStr "x" in
   eval_exec (Query [Child [SelWildcard]]) j = [].
 Proof. reflexivity. Qed.
 
+(** Filter on scalar yields empty (no children to filter). *)
 Example exec_filter_on_scalar_yields_empty :
   let j := JStr "abc" in
   eval_exec (Query [Child [f_len_gt_3]]) j = [].
@@ -1328,6 +1430,7 @@ Proof. reflexivity. Qed.
 (* Out-of-bounds contradiction lemma                             *)
 (* ------------------------------------------------------------ *)
 
+(** Contradiction: valid index cannot simultaneously satisfy bounds check failure. *)
 Lemma eval_selector_index_success_out_of_bounds_contradiction :
   forall z (xs : list value) v idx,
     idx = (if z <? 0 then Z.of_nat (List.length xs) + z else z) ->
@@ -1348,34 +1451,40 @@ Qed.
 (* End-to-end dataset and queries                            *)
 (*************************************************************)
 
-(* Small regexes used in filters *)
+(** Regex pattern matching "@" character in email addresses. *)
 Definition re_at : JSONPath.regex := RChr "@"%char.
+
+(** Regex pattern matching ".com" domain suffix. *)
 Definition re_dotcom : JSONPath.regex :=
   RCat (RChr "."%char)
    (RCat (RChr "c"%char) (RCat (RChr "o"%char) (RChr "m"%char))).
 
-(* Projects *)
+(** Project: Phoenix instance for Alice (ML/vision, 50 stars). *)
 Definition proj_phoenix_a : JSON.value :=
   JObject [("name", JStr "phoenix"); ("stars", JQ 50);
            ("labels", JArr [JStr "ml"; JStr "vision"])].
 
+(** Project: Drake (infrastructure, 20 stars). *)
 Definition proj_drake_a : JSON.value :=
   JObject [("name", JStr "drake"); ("stars", JQ 20);
            ("labels", JArr [JStr "infra"])].
 
+(** Project: Phoenix instance for Carol (ML/NLP, 70 stars). *)
 Definition proj_phoenix_c : JSON.value :=
   JObject [("name", JStr "phoenix"); ("stars", JQ 70);
            ("labels", JArr [JStr "ml"; JStr "nlp"])].
 
+(** Project: Eagle (infrastructure, 15 stars). *)
 Definition proj_eagle_c : JSON.value :=
   JObject [("name", JStr "eagle"); ("stars", JQ 15);
            ("labels", JArr [JStr "infra"])].
 
+(** Project: CRM (sales, 8 stars). *)
 Definition proj_crm_d : JSON.value :=
   JObject [("name", JStr "crm"); ("stars", JQ 8);
            ("labels", JArr [JStr "sales"])].
 
-(* Employees *)
+(** Employee: Alice (senior ML engineer, 34, two projects). *)
 Definition emp_alice : JSON.value :=
   JObject [("name", JStr "alice");
            ("age", JQ 34);
@@ -1384,6 +1493,7 @@ Definition emp_alice : JSON.value :=
            ("bio", JStr "senior ml engineer");
            ("projects", JArr [proj_phoenix_a; proj_drake_a])].
 
+(** Employee: Bob (frontend/UI, 29, no projects). *)
 Definition emp_bob : JSON.value :=
   JObject [("name", JStr "bob");
            ("age", JQ 29);
@@ -1392,6 +1502,7 @@ Definition emp_bob : JSON.value :=
            ("bio", JStr "ui");
            ("projects", JArr [])].
 
+(** Employee: Carol (NLP specialist, 41, two projects). *)
 Definition emp_carol : JSON.value :=
   JObject [("name", JStr "carol");
            ("age", JQ 41);
@@ -1400,6 +1511,7 @@ Definition emp_carol : JSON.value :=
            ("bio", JStr "nlp specialist");
            ("projects", JArr [proj_phoenix_c; proj_eagle_c])].
 
+(** Employee: Dave (sales lead, 33, one project). *)
 Definition emp_dave : JSON.value :=
   JObject [("name", JStr "dave");
            ("age", JQ 33);
@@ -1408,6 +1520,7 @@ Definition emp_dave : JSON.value :=
            ("bio", JStr "account exec");
            ("projects", JArr [proj_crm_d])].
 
+(** Employee: Erin (summer intern, 22, no projects). *)
 Definition emp_erin : JSON.value :=
   JObject [("name", JStr "erin");
            ("age", JQ 22);
@@ -1416,22 +1529,23 @@ Definition emp_erin : JSON.value :=
            ("bio", JStr "summer intern");
            ("projects", JArr [])].
 
-(* Departments *)
+(** Department: Research (Alice, Bob, Carol). *)
 Definition dept_research : JSON.value :=
   JObject [("name", JStr "Research");
            ("employees", JArr [emp_alice; emp_bob; emp_carol])].
 
+(** Department: Sales (Dave, Erin). *)
 Definition dept_sales : JSON.value :=
   JObject [("name", JStr "Sales");
            ("employees", JArr [emp_dave; emp_erin])].
 
-(* Whole document *)
+(** Complete company document: Acme with two departments. *)
 Definition company_json : JSON.value :=
   JObject [("company", JStr "Acme");
            ("departments", JArr [dept_research; dept_sales]);
            ("meta", JObject [("version", JStr "1.0"); ("rev", JQ 7)])].
 
-(* Query 1: filter by age/tags/email *)
+(** Compound filter: age>30, tags>=2, email contains "@" and ".com". *)
 Definition sel_emp_age_tags_emailcom : JSONPath.selector :=
   SelFilter
     (FAnd
@@ -1446,6 +1560,7 @@ Definition sel_emp_age_tags_emailcom : JSONPath.selector :=
           (FSearch (AValue (Query [Child [SelName "email"]])) re_at)
           (FSearch (AValue (Query [Child [SelName "email"]])) re_dotcom)))).
 
+(** Complex filter selects employees satisfying all criteria. *)
 Example exec_naturalistic_complex_filter :
   eval_exec
     (Query [ Child [SelName "departments"];
@@ -1461,8 +1576,7 @@ Example exec_naturalistic_complex_filter :
   ].
 Proof. reflexivity. Qed.
 
-(* Query 2: last project names at any depth *)
-
+(** Descendant query navigating to last project in each employee's list. *)
 Example exec_naturalistic_last_project_names :
   eval_exec
     (Query [ Desc  [SelName "projects"];
@@ -1480,8 +1594,7 @@ Example exec_naturalistic_last_project_names :
   ].
 Proof. reflexivity. Qed.
 
-(* Query 3: employees with at least two projects stars>=15 *)
-
+(** Nested filter: count of high-star (>=15) projects per employee >= 2. *)
 Definition sel_emp_two_big_projects : JSONPath.selector :=
   SelFilter
     (FCmp CGe
@@ -1493,6 +1606,7 @@ Definition sel_emp_two_big_projects : JSONPath.selector :=
                             (APrim (PNum (Q_of_Z 15)))) ] ]))
       (APrim (PNum (Q_of_Z 2)))).
 
+(** Nested count aggregation identifies employees with multiple high-value projects. *)
 Example exec_naturalistic_names_of_emp_two_big_projects :
   eval_exec
     (Query [ Child [SelName "departments"];
@@ -1508,14 +1622,14 @@ Example exec_naturalistic_names_of_emp_two_big_projects :
   ].
 Proof. reflexivity. Qed.
 
-(* Query 4: lexicographic sanity check *)
-
+(** String comparison filter using lexicographic ordering. *)
 Definition sel_emp_name_lt_c : JSONPath.selector :=
   SelFilter
     (FCmp CLt
       (AValue (Query [Child [SelName "name"]]))
       (APrim (PStr "c"))).
 
+(** Lexicographic filter retains names alphabetically before "c". *)
 Example exec_naturalistic_name_lex_lt_c :
   eval_exec
     (Query [ Child [SelName "departments"];
@@ -1531,6 +1645,7 @@ Example exec_naturalistic_name_lex_lt_c :
   ].
 Proof. reflexivity. Qed.
 
+(** Descendant includes root node when selector matches. *)
 Example exec_desc_includes_self_immediate :
   let j := JObject [("name", JStr "top"); ("child", JObject [("name", JStr "kid")])] in
   eval_exec (Query [Desc [SelName "name"]]) j
@@ -1538,24 +1653,26 @@ Example exec_desc_includes_self_immediate :
       ([SName "child"; SName "name"], JStr "kid") ].
 Proof. reflexivity. Qed.
 
+(** Negative-step slice with explicit bounds iterates backward. *)
 Example exec_slice_neg_step_bounds :
   let j := JArr [JQ 0; JQ 1; JQ 2; JQ 3; JQ 4] in
   eval_exec (Query [Child [SelSlice (Some 4) (Some 1) (-2)]]) j
   = [ ([SIndex 4], JQ 4) ; ([SIndex 2], JQ 2) ].
 Proof. reflexivity. Qed.
 
+(** AValue on multi-node result fails (requires singleton). *)
 Example exec_avalue_multi_hit_fails :
   let j := JObject [("a", JQ 1); ("b", JQ 2)] in
   Exec.holds_b (FCmp CEq (AValue (Query [Child [SelWildcard]])) (APrim (PNum (Q_of_Z 1))))
                ([], j) = false.
 Proof. reflexivity. Qed.
 
+(** Typing rejects search on non-string type. *)
 Example typing_requires_string_for_search :
   Typing.wf_fexpr (FSearch (APrim (PNum (Q_of_Z 3))) (RChr "3"%char)) = false.
 Proof. reflexivity. Qed.
 
-(* Extended dataset *)
-
+(** Extended Acme database with offices, detailed projects, metrics. *)
 Definition acme_db_json : JSON.value :=
   JObject [
     ("company", JStr "Acme Inc.");
@@ -1831,32 +1948,33 @@ Definition acme_db_json : JSON.value :=
 (* Equivalence theorems for the filter‑free, child‑only core    *)
 (* ============================================================ *)
 
+(** Equivalence module: relational semantics match executable for child-only queries. *)
 Module JSONPath_Equiv.
   Import JSON JSONPath Exec.
 
   Local Open Scope Z_scope.
 
-  (* Syntactic fragments *)
-
+  (** Selector contains no filter. *)
   Definition selector_filter_free (s:selector) : bool :=
     match s with
     | SelFilter _ => false
     | _ => true
     end.
 
+  (** Segment is child-only with filter-free selectors. *)
   Definition segment_child_only (seg:segment) : bool :=
     match seg with
     | Child sels => forallb selector_filter_free sels
     | Desc _     => false
     end.
 
+  (** Query uses only child segments with no filters or descendant. *)
   Definition query_child_only (q:query) : bool :=
     match q with
     | Query segs => forallb segment_child_only segs
     end.
 
-  (* Utilities *)
-
+  (** Successful find implies predicate holds on result. *)
   Lemma find_some :
     forall (A:Type) (f:A->bool) (l:list A) (x:A),
       List.find f l = Some x -> f x = true.
@@ -1867,8 +1985,7 @@ Module JSONPath_Equiv.
     - apply IH; assumption.
   Qed.
 
-  (* Helpers *)
-
+  (** Boolean >=? false implies strict less-than. *)
   Lemma geb_false_lt : forall x y : Z, (x >=? y) = false -> x < y.
   Proof.
     intros x y H.
@@ -1878,12 +1995,15 @@ Module JSONPath_Equiv.
     rewrite C in Hc. inversion Hc; assumption.
   Qed.
 
+  (** Boolean <? false implies greater-or-equal. *)
   Lemma ltb_false_ge : forall x y : Z, (x <? y) = false -> y <= x.
   Proof. intros x y H; apply Z.ltb_ge in H; exact H. Qed.
 
+  (** Disjunction false implies both conjuncts false. *)
   Lemma orb_false_split : forall a b : bool, a || b = false -> a = false /\ b = false.
   Proof. intros a b H; now apply Bool.orb_false_iff in H. Qed.
 
+  (** Boolean bounds checks imply arithmetic bounds. *)
   Lemma in_bounds_from_bools :
     forall idx len : Z,
       (idx <? 0) = false ->
@@ -1894,6 +2014,7 @@ Module JSONPath_Equiv.
     split; [apply ltb_false_ge in Hlt0; lia | apply geb_false_lt in Hge; exact Hge].
   Qed.
 
+  (** In-bounds natural index has corresponding list element. *)
   Lemma nth_error_some_of_lt :
     forall (A:Type) (xs:list A) n,
       (n < List.length xs)%nat -> exists v, nth_error xs n = Some v.
@@ -1905,6 +2026,7 @@ Module JSONPath_Equiv.
       destruct (IH H0) as [v Hv]. eexists; exact Hv.
   Qed.
 
+  (** Boolean bounds on Z-index imply element exists after conversion to nat. *)
   Lemma nth_error_some_of_bools_Z :
     forall (A:Type) (xs:list A) idx,
       (idx <? 0) = false ->
@@ -1919,6 +2041,7 @@ Module JSONPath_Equiv.
     eapply nth_error_some_of_lt; eauto.
   Qed.
 
+  (** Finding key via string_eqb implies key matches search string. *)
   Lemma find_key_eqb_eq :
     forall s k v (fields:list (string * JSON.value)),
       List.find (fun kv => string_eqb (fst kv) s) fields = Some (k, v) ->
@@ -1966,7 +2089,7 @@ Proof.
 Qed.
 
 
-(* Soundness of the nf selector interpreter *)
+(** Soundness: filter-free executable selector produces relationally valid results. *)
 Lemma sel_exec_nf_sound :
   forall sel n,
     selector_filter_free sel = true ->
@@ -2117,7 +2240,7 @@ Qed.
     forall {A} (x y:list A), x = y -> Permutation x y.
   Proof. intros A x y ->; apply Permutation_refl. Qed.
 
-(* Completeness of the nf selector interpreter *)
+(** Completeness: relational results are permutation of executable output. *)
 Lemma sel_exec_nf_complete :
   forall sel n res,
     selector_filter_free sel = true ->
@@ -2782,6 +2905,29 @@ Proof.
   split; [exact Hseg | exact Hrest].
 Qed.
 
+Lemma is_prefix_of : forall {A} (p1 p2 : list A), Prop.
+Proof.
+  intros A p1 p2.
+  exact (exists suffix, p2 = List.app p1 suffix).
+Defined.
+
+Corollary segment_prefix_paths_equal_when_suffix_empty :
+  forall prefix J res_prefix res_full,
+    query_child_only (Query prefix) = true ->
+    eval (Query prefix) J res_prefix ->
+    eval (Query prefix) J res_full ->
+    forall p v,
+      In (p, v) res_prefix ->
+      In (p, v) res_full.
+Proof.
+  intros prefix J res_prefix res_full Hpre Heval_pre Heval_full p v Hin.
+  pose proof (child_only_end_to_end_equiv (Query prefix) J res_prefix Hpre Heval_pre) as Hperm1.
+  pose proof (child_only_end_to_end_equiv (Query prefix) J res_full Hpre Heval_full) as Hperm2.
+  assert (Hperm : Permutation res_prefix res_full).
+  { transitivity (Exec.eval_exec_nf (Query prefix) J); [exact Hperm1 | apply Permutation_sym; exact Hperm2]. }
+  eapply Permutation_in; [exact Hperm | exact Hin].
+Qed.
+
 (* Determinism up to permutation at the query level *)
 Corollary child_only_query_deterministic_up_to_perm :
   forall q J res1 res2,
@@ -2898,6 +3044,7 @@ Proof.
     eapply IH; [exact Hok'| exact Hstep].
 Qed.
 
+(** Linear queries return at most one result. *)
 Theorem linear_query_arity_le1 :
   forall q J,
     linear_query q = true ->
@@ -2908,6 +3055,7 @@ Proof.
   eapply segs_exec_nf_linear_len_le1; [exact Hlin| simpl; lia].
 Qed.
 
+(** List of length ≤1 is either empty or singleton. *)
 Lemma length_le1_cases {A} (xs : list A) :
   (List.length xs <= 1)%nat -> xs = [] \/ exists x, xs = [x].
 Proof.
@@ -2918,8 +3066,7 @@ Proof.
     + exfalso. simpl in H. lia.
 Qed.
 
-(* Bridge: linear segments/queries imply the child-only fragment *)
-
+(** Linear segment syntax implies child-only fragment. *)
 Lemma linear_implies_segment_child_only :
   forall seg, linear_segment seg = true -> segment_child_only seg = true.
 Proof.
@@ -2933,6 +3080,7 @@ Proof.
     destruct sels' as [|s' ss']; simpl in H; [reflexivity | discriminate H].
 Qed.
 
+(** Linear query syntax implies child-only fragment. *)
 Lemma linear_query_implies_child_only :
   forall q, linear_query q = true -> query_child_only q = true.
 Proof.
@@ -2942,7 +3090,7 @@ Proof.
   rewrite (linear_implies_segment_child_only _ Hseg), IH; auto.
 Qed.
 
-(* Permutation on singletons collapses to equality *)
+(** Permutation of singleton collapses to equality. *)
 Lemma permutation_singleton {A} (x : A) (ys : list A) :
   Permutation [x] ys -> ys = [x].
 Proof.
@@ -2955,7 +3103,7 @@ Proof.
     + pose proof (Permutation_length P) as L; simpl in L; discriminate L.
 Qed.
 
-(* Exact equivalence (not just up to permutation) for linear queries *)
+(** Linear queries: relational and executable results are exactly equal (not just permutation). *)
 Theorem linear_query_exact_equiv :
   forall q J res,
     linear_query q = true ->
