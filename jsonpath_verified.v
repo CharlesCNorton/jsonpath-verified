@@ -3393,6 +3393,49 @@ Proof.
       rewrite E in Harith; simpl in Harith; lia.
 Qed.
 
+(* ============================================================ *)
+(* Additional Linear Query Theorems                            *)
+(* ============================================================ *)
+
+(** General relational-executable bridge: equivalence for any result. *)
+Theorem linear_query_relational_executable_bridge :
+  forall q J res,
+    linear_query q = true ->
+    (eval q J res <-> Exec.eval_exec_nf q J = res).
+Proof.
+  intros q J res Hlin; split; intro H.
+  - symmetry; eapply linear_query_exact_equiv; eauto.
+  - pose proof (linear_query_implies_child_only q Hlin) as Hco.
+    pose proof (eval_exec_nf_sound q J Hco) as Hsound.
+    rewrite H in Hsound; exact Hsound.
+Qed.
+
+(** Linear selector uniqueness for SelName. *)
+Theorem linear_selector_unique_name :
+  forall s p v res,
+    eval_selector (SelName s) (p, v) res ->
+    (List.length res <= 1)%nat.
+Proof.
+  intros s p v res Heval.
+  pose proof (sel_exec_nf_complete (SelName s) (p, v) res eq_refl Heval) as Hperm.
+  pose proof (Permutation_length Hperm) as Hlen.
+  rewrite Hlen.
+  apply nf_selname_length_le1.
+Qed.
+
+(** Linear selector uniqueness for SelIndex. *)
+Theorem linear_selector_unique_index :
+  forall i p v res,
+    eval_selector (SelIndex i) (p, v) res ->
+    (List.length res <= 1)%nat.
+Proof.
+  intros i p v res Heval.
+  pose proof (sel_exec_nf_complete (SelIndex i) (p, v) res eq_refl Heval) as Hperm.
+  pose proof (Permutation_length Hperm) as Hlen.
+  rewrite Hlen.
+  apply nf_selindex_length_le1.
+Qed.
+
 (* Search = Match with .* r .* at the holds_b level *)
 Lemma holds_b_search_as_match :
   forall a r p v,
