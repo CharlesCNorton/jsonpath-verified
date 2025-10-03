@@ -239,6 +239,149 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
+(* Helper functions for relational semantics                    *)
+(* ------------------------------------------------------------ *)
+
+Fixpoint nullable (r:regex) : bool :=
+  match r with
+  | REmpty => false
+  | REps => true
+  | RChr _ => false
+  | RAny => false
+  | RAlt r1 r2 => orb (nullable r1) (nullable r2)
+  | RCat r1 r2 => andb (nullable r1) (nullable r2)
+  | RStar _ => true
+  end.
+
+Fixpoint deriv (a:ascii) (r:regex) : regex :=
+  match r with
+  | REmpty => REmpty
+  | REps => REmpty
+  | RChr c => if ascii_eqb a c then REps else REmpty
+  | RAny => REps
+  | RAlt r1 r2 => RAlt (deriv a r1) (deriv a r2)
+  | RCat r1 r2 =>
+      let d1 := deriv a r1 in
+      let d2 := deriv a r2 in
+      if nullable r1 then RAlt (RCat d1 r2) d2 else RCat d1 r2
+  | RStar r1 => RCat (deriv a r1) (RStar r1)
+  end.
+
+Fixpoint rsimpl (r:regex) : regex :=
+  match r with
+  | RAlt r1 r2 =>
+      let r1' := rsimpl r1 in
+      let r2' := rsimpl r2 in
+      match r1', r2' with
+      | REmpty, _ => r2'
+      | _, REmpty => r1'
+      | _, _      => RAlt r1' r2'
+      end
+  | RCat r1 r2 =>
+      let r1' := rsimpl r1 in
+      let r2' := rsimpl r2 in
+      match r1', r2' with
+      | REmpty, _ => REmpty
+      | _ , REmpty => REmpty
+      | REps , _ => r2'
+      | _ , REps => r1'
+      | _ , _    => RCat r1' r2'
+      end
+  | RStar r1 =>
+      let r1' := rsimpl r1 in
+      match r1' with
+      | REmpty | REps => REps
+      | _ => RStar r1'
+      end
+  | _ => r
+  end.
+
+Definition deriv_simpl (a:ascii) (r:regex) : regex :=
+  rsimpl (deriv a r).
+
+Fixpoint list_of_string (s:string) : list ascii :=
+  match s with
+  | EmptyString => []
+  | String a s' => a :: list_of_string s'
+  end.
+
+Fixpoint matches_from (r:regex) (cs:list ascii) : bool :=
+  match cs with
+  | [] => nullable r
+  | a::cs' => matches_from (deriv_simpl a r) cs'
+  end.
+
+Definition regex_match (r:regex) (s:string) : bool :=
+  matches_from r (list_of_string s).
+
+Definition regex_search (r:regex) (s:string) : bool :=
+  regex_match (RCat (RStar RAny) (RCat r (RStar RAny))) s.
+
+Definition prim_eq (p q:prim) : bool :=
+  match p, q with
+  | PNull, PNull => true
+  | PBool b1, PBool b2 => Bool.eqb b1 b2
+  | PNum n1, PNum n2 => Qeqb n1 n2
+  | PStr s1, PStr s2 => string_eqb s1 s2
+  | _, _ => false
+  end.
+
+Definition prim_lt (p q:prim) : bool :=
+  match p, q with
+  | PNum n1, PNum n2 => Qltb n1 n2
+  | PStr s1, PStr s2 => str_ltb s1 s2
+  | _ , _ => false
+  end.
+
+Definition cmp_prim (op:cmp) (x y:prim) : bool :=
+  match op with
+  | CEq => prim_eq x y
+  | CNe => negb (prim_eq x y)
+  | CLt => prim_lt x y
+  | CLe => orb (prim_lt x y) (prim_eq x y)
+  | CGt => prim_lt y x
+  | CGe => orb (prim_lt y x) (prim_eq x y)
+  end.
+
+Definition prim_of_value (v:value) : option prim :=
+  match v with
+  | JNull => Some PNull
+  | JBool b => Some (PBool b)
+  | JNum n => Some (PNum n)
+  | JStr s => Some (PStr s)
+  | JArr _ => None
+  | JObject _ => None
+  end.
+
+Fixpoint holds_b_simple (eval_func: query -> value -> list node)
+                        (aeval_func: aexpr -> value -> option prim)
+                        (f:fexpr) (n:node) {struct f} : bool :=
+  let '(_,v) := n in
+  match f with
+  | FTrue => true
+  | FNot g => negb (holds_b_simple eval_func aeval_func g n)
+  | FAnd g h => andb (holds_b_simple eval_func aeval_func g n) (holds_b_simple eval_func aeval_func h n)
+  | FOr  g h => orb  (holds_b_simple eval_func aeval_func g n) (holds_b_simple eval_func aeval_func h n)
+  | FExists q =>
+      negb (Nat.eqb (List.length (eval_func q v)) 0)
+  | FCmp op a b =>
+      match aeval_func a v, aeval_func a v with
+      | Some pa, Some pb => cmp_prim op pa pb
+      | _, _ => false
+      end
+  | FMatch a r =>
+      match aeval_func a v with
+      | Some (PStr s) => regex_match r s
+      | _ => false
+      end
+  | FSearch a r =>
+      match aeval_func a v with
+      | Some (PStr s) => regex_search r s
+      | _ => false
+      end
+  end.
+
+(* ------------------------------------------------------------ *)
 (* Relational semantics                                         *)
 (* ------------------------------------------------------------ *)
 
@@ -299,9 +442,10 @@ Inductive eval_selector : selector -> JSON.node -> list JSON.node -> Prop :=
     forall p xs start end_ stp,
       eval_selector (SelSlice start end_ stp) (p, JArr xs)
         (map (fun n => (List.app p [SIndex (Z.of_nat n)], nth_default JNull xs n))
-             (slice_positions (List.length xs) start end_ stp)).
+             (slice_positions (List.length xs) start end_ stp))
 
-Inductive visit_order : JSON.node -> list JSON.node -> Prop :=
+
+with visit_order : JSON.node -> list JSON.node -> Prop :=
 | VisitLeaf :
     forall p v,
       (forall xs, v <> JArr xs) ->
@@ -319,9 +463,9 @@ Inductive visit_order : JSON.node -> list JSON.node -> Prop :=
       children = map (fun '(k,v) => (List.app p [SName k], v)) perm ->
       Forall2 (fun child lst => visit_order child lst) children children_lists ->
       nodes = (p, JObject fs) :: List.concat children_lists ->
-      visit_order (p, JObject fs) nodes.
+      visit_order (p, JObject fs) nodes
 
-Inductive eval_seg : segment -> JSON.node -> list JSON.node -> Prop :=
+with eval_seg : segment -> JSON.node -> list JSON.node -> Prop :=
 | EvalSegChild :
     forall sels n results,
       (exists selector_results : list (list JSON.node),
@@ -333,21 +477,102 @@ Inductive eval_seg : segment -> JSON.node -> list JSON.node -> Prop :=
       visit_order n visited ->
       Forall2 (fun vn res => eval_seg (Child sels) vn res) visited per_results ->
       results = List.concat per_results ->
-      eval_seg (Desc sels) n results.
+      eval_seg (Desc sels) n results
 
-Inductive eval_rest_on_nodes : list segment -> list JSON.node -> list JSON.node -> Prop :=
+with eval_rest_on_nodes : list segment -> list JSON.node -> list JSON.node -> Prop :=
 | EvalRestEmpty : forall ns, eval_rest_on_nodes [] ns ns
 | EvalRestCons  : forall seg rest ns inter finals,
     (exists node_results : list (list JSON.node),
         Forall2 (fun n res => eval_seg seg n res) ns node_results /\
         inter = List.concat node_results) ->
     eval_rest_on_nodes rest inter finals ->
-    eval_rest_on_nodes (seg :: rest) ns finals.
+    eval_rest_on_nodes (seg :: rest) ns finals
 
-Inductive eval : query -> JSON.value -> list JSON.node -> Prop :=
+with eval : query -> JSON.value -> list JSON.node -> Prop :=
 | EvalQuery : forall segs J results,
     eval_rest_on_nodes segs [([], J)] results ->
-    eval (Query segs) J results.
+    eval (Query segs) J results
+
+with aeval_rel : aexpr -> value -> prim -> Prop :=
+| AevalPrim :
+    forall v p,
+      aeval_rel (APrim p) v p
+
+| AevalCount :
+    forall q v res,
+      eval q v res ->
+      aeval_rel (ACount q) v (PNum (Q_of_nat (List.length res)))
+
+| AevalValue :
+    forall q v p' v1 p,
+      eval q v [(p', v1)] ->
+      prim_of_value v1 = Some p ->
+      aeval_rel (AValue q) v p
+
+| AevalLengthStr :
+    forall q v p' s,
+      eval q v [(p', JStr s)] ->
+      aeval_rel (ALengthV q) v (PNum (Q_of_nat (String.length s)))
+
+| AevalLengthArr :
+    forall q v p' xs,
+      eval q v [(p', JArr xs)] ->
+      aeval_rel (ALengthV q) v (PNum (Q_of_nat (List.length xs)))
+
+| AevalLengthObj :
+    forall q v p' fs,
+      eval q v [(p', JObject fs)] ->
+      aeval_rel (ALengthV q) v (PNum (Q_of_nat (List.length fs)))
+
+with holds : fexpr -> JSON.node -> Prop :=
+| HoldsTrue :
+    forall n,
+      holds FTrue n
+
+| HoldsAnd :
+    forall g h n,
+      holds g n ->
+      holds h n ->
+      holds (FAnd g h) n
+
+| HoldsOr_left :
+    forall g h n,
+      holds g n ->
+      holds (FOr g h) n
+
+| HoldsOr_right :
+    forall g h n,
+      holds h n ->
+      holds (FOr g h) n
+
+| HoldsExists :
+    forall q n v res,
+      n = (fst n, v) ->
+      eval q v res ->
+      res <> [] ->
+      holds (FExists q) n
+
+| HoldsCmp :
+    forall op a b n v pa pb,
+      n = (fst n, v) ->
+      aeval_rel a v pa ->
+      aeval_rel b v pb ->
+      cmp_prim op pa pb = true ->
+      holds (FCmp op a b) n
+
+| HoldsMatch :
+    forall a r n v s,
+      n = (fst n, v) ->
+      aeval_rel a v (PStr s) ->
+      regex_match r s = true ->
+      holds (FMatch a r) n
+
+| HoldsSearch :
+    forall a r n v s,
+      n = (fst n, v) ->
+      aeval_rel a v (PStr s) ->
+      regex_search r s = true ->
+      holds (FSearch a r) n.
 
 (* ------------------------------------------------------------ *)
 (* Regex engine (ASCII)                                         *)
