@@ -2767,6 +2767,21 @@ Proof.
   eapply eval_rest_on_nodes_nf_complete; eauto.
 Qed.
 
+Corollary query_splits_into_segments :
+  forall seg rest ns finals,
+    eval_rest_on_nodes (seg :: rest) ns finals ->
+    exists inter,
+      (exists node_results,
+          Forall2 (fun n res => eval_seg seg n res) ns node_results /\
+          inter = List.concat node_results) /\
+      eval_rest_on_nodes rest inter finals.
+Proof.
+  intros seg rest ns finals Heval.
+  inversion Heval as [|? ? ? ? ? Hseg Hrest]; subst; clear Heval.
+  exists inter.
+  split; [exact Hseg | exact Hrest].
+Qed.
+
 (* Determinism up to permutation at the query level *)
 Corollary child_only_query_deterministic_up_to_perm :
   forall q J res1 res2,
@@ -3047,6 +3062,23 @@ Proof.
   - apply in_map_iff. exists (k, v). split; auto.
 Qed.
 
+Corollary wildcard_commutes_with_field_permutation :
+  forall p fields1 fields2 res1 res2,
+    Permutation fields1 fields2 ->
+    eval_selector SelWildcard (p, JObject fields1) res1 ->
+    eval_selector SelWildcard (p, JObject fields2) res2 ->
+    Permutation res1 res2.
+Proof.
+  intros p fields1 fields2 res1 res2 Hfields Heval1 Heval2.
+  pose proof (sel_exec_nf_complete SelWildcard (p, JObject fields1) res1 eq_refl Heval1) as Hcomp1.
+  pose proof (sel_exec_nf_complete SelWildcard (p, JObject fields2) res2 eq_refl Heval2) as Hcomp2.
+  simpl in Hcomp1, Hcomp2.
+  eapply Permutation_trans; [exact Hcomp1|].
+  eapply Permutation_trans; [|apply Permutation_sym; exact Hcomp2].
+  apply Permutation_map.
+  exact Hfields.
+Qed.
+
 Lemma nth_error_combine_seq_gen :
   forall {A} (start : nat) (xs : list A) i v,
     nth_error xs i = Some v ->
@@ -3141,6 +3173,20 @@ Proof.
   rewrite <- Heq in Hle.
   simpl in Hle.
   lia.
+Qed.
+
+Corollary linear_first_last_agree :
+  forall q J n,
+    linear_query q = true ->
+    eval q J [n] ->
+    List.hd_error (Exec.eval_exec_nf q J) = Some n /\
+    List.last (Exec.eval_exec_nf q J) n = n.
+Proof.
+  intros q J n Hlin Hev.
+  pose proof (linear_query_exact_equiv q J [n] Hlin Hev) as Heq.
+  rewrite <- Heq.
+  simpl.
+  split; reflexivity.
 Qed.
 
 (* Module API *)
