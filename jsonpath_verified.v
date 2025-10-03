@@ -2276,6 +2276,18 @@ Proof.
   intros [p v]. unfold visit_df_node. apply visit_df_value_sound.
 Qed.
 
+Corollary root_visited_first :
+  forall p v visited,
+    visit_order (p, v) visited ->
+    exists rest, visited = (p, v) :: rest.
+Proof.
+  intros p v visited Hvisit.
+  inversion Hvisit; subst.
+  - exists []. reflexivity.
+  - eexists. reflexivity.
+  - eexists. reflexivity.
+Qed.
+
 Lemma Permutation_app_cons_comm :
   forall {A} (l1 l2 : list A) (a : A),
     Permutation (List.app l1 (a :: l2)) (a :: List.app l1 l2).
@@ -2931,6 +2943,20 @@ Proof.
     apply Permutation_sym in P.        (* P : Permutation [x] res *)
     pose proof (permutation_singleton x res P) as ->.  (* res = [x] *)
     now rewrite E_one.
+Qed.
+
+Corollary linear_result_empty_or_singleton :
+  forall q J res,
+    linear_query q = true ->
+    eval q J res ->
+    res = [] \/ exists n, res = [n].
+Proof.
+  intros q J res Hlin Hev.
+  pose proof (linear_query_arity_le1 q J Hlin) as Hle.
+  pose proof (linear_query_exact_equiv q J res Hlin Hev) as Heq.
+  rewrite Heq.
+  apply length_le1_cases.
+  exact Hle.
 Qed.
 
 (* Search = Match with .* r .* at the holds_b level *)
