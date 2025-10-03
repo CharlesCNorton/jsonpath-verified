@@ -3169,6 +3169,230 @@ Proof.
   apply nth_error_some_of_bools_Z; assumption.
 Qed.
 
+(* ============================================================ *)
+(* Soundness: Executable semantics satisfy relational spec     *)
+(* ============================================================ *)
+
+(** Soundness for child segments: executable results satisfy relational specification. *)
+Lemma seg_exec_nf_sound_child :
+  forall sels n,
+    forallb selector_filter_free sels = true ->
+    eval_seg (Child sels) n (Exec.seg_exec_nf (Child sels) n).
+Proof.
+  intros sels n Hall.
+  unfold Exec.seg_exec_nf, Exec.seg_exec_impl, Exec.child_on_node_impl.
+  eapply EvalSegChild.
+  induction sels as [|sel sels' IH].
+  - exists []. split; [constructor | reflexivity].
+  - simpl in Hall. apply Bool.andb_true_iff in Hall as [Hsel Hsels'].
+    simpl.
+    specialize (IH Hsels').
+    destruct IH as [selector_results [HF2 Hconcat]].
+    exists (Exec.sel_exec_nf sel n :: selector_results).
+    split.
+    + constructor.
+      * apply sel_exec_nf_sound; exact Hsel.
+      * exact HF2.
+    + simpl. rewrite <- Hconcat. reflexivity.
+Qed.
+
+(** Soundness for segments: wrapper for child-only segments. *)
+Lemma seg_exec_nf_sound :
+  forall seg n,
+    segment_child_only seg = true ->
+    eval_seg seg n (Exec.seg_exec_nf seg n).
+Proof.
+  intros seg n Hok.
+  destruct seg as [sels|sels]; simpl in Hok; [|discriminate].
+  apply seg_exec_nf_sound_child; exact Hok.
+Qed.
+
+(** Helper: Forall2 construction for segment soundness over node lists. *)
+Lemma forall2_eval_seg_sound :
+  forall seg ns,
+    segment_child_only seg = true ->
+    Forall2 (fun n res => eval_seg seg n res) ns (map (Exec.seg_exec_nf seg) ns).
+Proof.
+  intros seg ns Hseg.
+  induction ns as [|n ns' IH]; simpl.
+  - constructor.
+  - constructor.
+    + apply seg_exec_nf_sound; exact Hseg.
+    + exact IH.
+Qed.
+
+(** Soundness for multi-segment evaluation: threading soundness through segment sequences. *)
+Lemma eval_rest_on_nodes_nf_sound :
+  forall segs ns,
+    forallb segment_child_only segs = true ->
+    eval_rest_on_nodes segs ns (Exec.segs_exec_nf segs ns).
+Proof.
+  intros segs ns Hok.
+  revert ns; induction segs as [|seg segs' IH]; intros ns; simpl in *.
+  - constructor.
+  - apply Bool.andb_true_iff in Hok as [Hseg Hsegs'].
+    unfold Exec.segs_exec_nf, Exec.segs_exec_impl.
+    fold (Exec.segs_exec_impl Exec.sel_exec_nf).
+    fold Exec.segs_exec_nf.
+    eapply EvalRestCons.
+    + exists (map (Exec.seg_exec_nf seg) ns).
+      split.
+      * apply forall2_eval_seg_sound; exact Hseg.
+      * reflexivity.
+    + apply IH; exact Hsegs'.
+Qed.
+
+(** Top-level soundness: executable query evaluation satisfies relational specification. *)
+Lemma eval_exec_nf_sound :
+  forall q J,
+    query_child_only q = true ->
+    eval q J (Exec.eval_exec_nf q J).
+Proof.
+  intros [segs] J Hok; simpl in *.
+  constructor.
+  apply eval_rest_on_nodes_nf_sound; exact Hok.
+Qed.
+
+(* ============================================================ *)
+(* Linear Query Computational Decidability                     *)
+(* ============================================================ *)
+
+(**
+  Linear Query Decidability: Computational decision procedure for linear queries.
+
+  For any linear query (using only SelName/SelIndex), we can decide whether it
+  returns a result or is empty. The result is a sumbool type with computational
+  content suitable for extraction.
+
+  Combines:
+  - linear_query_exact_equiv: relational and executable results are identical
+  - linear_query_arity_le1: at most one result for linear queries
+  - eval_exec_nf_sound: executable results satisfy relational specification
+
+  This enables extraction to efficient OCaml decision procedures with correctness
+  guarantees.
+*)
+Theorem linear_query_result_decidable :
+  forall q J,
+    linear_query q = true ->
+    { exists p v, eval q J [(p, v)] } + { eval q J [] }.
+Proof.
+  intros q J Hlin.
+  pose proof (linear_query_implies_child_only q Hlin) as Hco.
+  destruct (Exec.eval_exec_nf q J) as [|[p v] rest] eqn:E.
+  - right.
+    pose proof (eval_exec_nf_sound q J Hco) as Hsound.
+    rewrite E in Hsound.
+    exact Hsound.
+  - destruct rest as [|n2 rest'].
+    + left.
+      exists p, v.
+      pose proof (eval_exec_nf_sound q J Hco) as Hsound.
+      rewrite E in Hsound.
+      exact Hsound.
+    + exfalso.
+      pose proof (linear_query_arity_le1 q J Hlin) as Harith.
+      rewrite E in Harith.
+      simpl in Harith.
+      lia.
+Qed.
+
+(** Decidability dual: emptiness vs existence formulation. *)
+Corollary linear_query_empty_decidable :
+  forall q J,
+    linear_query q = true ->
+    { eval q J [] } + { exists p v, eval q J [(p, v)] }.
+Proof.
+  intros q J Hlin.
+  destruct (linear_query_result_decidable q J Hlin) as [Hexists | Hempty].
+  - right; exact Hexists.
+  - left; exact Hempty.
+Qed.
+
+(** Uniqueness: if two singleton results exist, they are identical. *)
+Corollary linear_query_result_unique :
+  forall q J p1 v1 p2 v2,
+    linear_query q = true ->
+    eval q J [(p1, v1)] ->
+    eval q J [(p2, v2)] ->
+    (p1, v1) = (p2, v2).
+Proof.
+  intros q J p1 v1 p2 v2 Hlin H1 H2.
+  pose proof (linear_query_exact_equiv q J [(p1, v1)] Hlin H1) as Eq1.
+  pose proof (linear_query_exact_equiv q J [(p2, v2)] Hlin H2) as Eq2.
+  assert (Heq : [(p1, v1)] = [(p2, v2)]) by (rewrite Eq1, Eq2; reflexivity).
+  inversion Heq; reflexivity.
+Qed.
+
+(** Bidirectional equivalence: relational and executable singleton results coincide. *)
+Corollary linear_query_executable_iff :
+  forall q J p v,
+    linear_query q = true ->
+    (eval q J [(p, v)] <-> Exec.eval_exec_nf q J = [(p, v)]).
+Proof.
+  intros q J p v Hlin; split; intro H.
+  - symmetry; eapply linear_query_exact_equiv; eauto.
+  - pose proof (linear_query_implies_child_only q Hlin) as Hco.
+    pose proof (eval_exec_nf_sound q J Hco) as Hsound.
+    rewrite H in Hsound; exact Hsound.
+Qed.
+
+(** Bidirectional equivalence: relational and executable empty results coincide. *)
+Corollary linear_query_empty_iff :
+  forall q J,
+    linear_query q = true ->
+    (eval q J [] <-> Exec.eval_exec_nf q J = []).
+Proof.
+  intros q J Hlin; split; intro H.
+  - symmetry; eapply linear_query_exact_equiv; eauto.
+  - pose proof (linear_query_implies_child_only q Hlin) as Hco.
+    pose proof (eval_exec_nf_sound q J Hco) as Hsound.
+    rewrite H in Hsound; exact Hsound.
+Qed.
+
+(** Existence from non-empty executable result. *)
+Corollary linear_query_has_result :
+  forall q J,
+    linear_query q = true ->
+    Exec.eval_exec_nf q J <> [] ->
+    exists p v, eval q J [(p, v)].
+Proof.
+  intros q J Hlin Hne.
+  destruct (linear_query_result_decidable q J Hlin) as [Hexists | Hempty].
+  - exact Hexists.
+  - exfalso.
+    apply Hne.
+    apply linear_query_empty_iff; auto.
+Qed.
+
+(** Combined computational search: packages executable and relational results together. *)
+Corollary linear_query_computational_search :
+  forall q J,
+    linear_query q = true ->
+    (Exec.eval_exec_nf q J = [] /\ eval q J []) \/
+    (exists p v, Exec.eval_exec_nf q J = [(p, v)] /\ eval q J [(p, v)]).
+Proof.
+  intros q J Hlin.
+  pose proof (linear_query_result_decidable q J Hlin) as Hdec.
+  destruct (Exec.eval_exec_nf q J) as [|[p v] rest] eqn:E.
+  - left; split; auto.
+    destruct Hdec as [[p' [v' Hcontra]] | Hempty].
+    + pose proof (linear_query_exact_equiv q J [(p', v')] Hlin Hcontra) as Heq.
+      rewrite E in Heq; discriminate Heq.
+    + exact Hempty.
+  - destruct rest as [|n2 rest'].
+    + right; exists p, v; split; auto.
+      destruct Hdec as [[p' [v' Hev]] | Hempty].
+      * pose proof (linear_query_exact_equiv q J [(p', v')] Hlin Hev) as Heq.
+        rewrite E in Heq; inversion Heq; subst.
+        exact Hev.
+      * pose proof (linear_query_exact_equiv q J [] Hlin Hempty) as Heq.
+        rewrite E in Heq; discriminate Heq.
+    + exfalso.
+      pose proof (linear_query_arity_le1 q J Hlin) as Harith.
+      rewrite E in Harith; simpl in Harith; lia.
+Qed.
+
 (* Search = Match with .* r .* at the holds_b level *)
 Lemma holds_b_search_as_match :
   forall a r p v,
