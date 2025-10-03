@@ -3599,6 +3599,127 @@ Proof.
   split; reflexivity.
 Qed.
 
+(* ============================================================ *)
+(* Landmark Theorems Building on eval_rest_on_nodes_nf_complete *)
+(* ============================================================ *)
+
+Lemma eval_rest_app_assoc :
+  forall segs1 segs2 ns finals,
+    eval_rest_on_nodes (segs1 ++ segs2) ns finals ->
+    exists inter,
+      eval_rest_on_nodes segs1 ns inter /\
+      eval_rest_on_nodes segs2 inter finals.
+Proof.
+  intros segs1 segs2 ns finals Heval.
+  revert ns finals Heval.
+  induction segs1 as [|seg1 segs1' IH]; intros ns finals Heval.
+  - simpl in Heval. exists ns. split; [constructor | exact Heval].
+  - simpl in Heval. inversion Heval as [| ? ? ? inter1 ? Hseg Hrest]; subst; clear Heval.
+    specialize (IH inter1 finals Hrest) as [inter2 [Hinter1 Hinter2]].
+    exists inter2. split; [| exact Hinter2].
+    eapply EvalRestCons; [exact Hseg | exact Hinter1].
+Qed.
+
+Lemma eval_rest_app_compose :
+  forall segs1 segs2 ns inter finals,
+    eval_rest_on_nodes segs1 ns inter ->
+    eval_rest_on_nodes segs2 inter finals ->
+    eval_rest_on_nodes (segs1 ++ segs2) ns finals.
+Proof.
+  intros segs1 segs2 ns inter finals Hinter Hfinals.
+  revert ns inter finals Hinter Hfinals.
+  induction segs1 as [|seg1 segs1' IH]; intros ns inter finals Hinter Hfinals.
+  - inversion Hinter; subst. exact Hfinals.
+  - inversion Hinter as [| ? ? ? inter1 ? Hseg Hrest]; subst; clear Hinter.
+    simpl. eapply EvalRestCons; [exact Hseg | eapply IH; [exact Hrest | exact Hfinals]].
+Qed.
+
+Theorem query_composition_associative :
+  forall segs1 segs2 segs3 J res,
+    query_child_only (Query (segs1 ++ segs2 ++ segs3)) = true ->
+    (eval (Query (segs1 ++ (segs2 ++ segs3))) J res <->
+     eval (Query ((segs1 ++ segs2) ++ segs3)) J res).
+Proof.
+  intros segs1 segs2 segs3 J res Hok.
+  split; intro Heval.
+  - inversion Heval; subst; clear Heval.
+    apply eval_rest_app_assoc in H0 as [inter1 [H1 H2]].
+    apply eval_rest_app_assoc in H2 as [inter2 [H2a H2b]].
+    eapply (eval_rest_app_compose segs2 segs3 inter1 inter2 res) in H2a; [| exact H2b].
+    rewrite <- app_assoc.
+    constructor.
+    eapply (eval_rest_app_compose segs1 (segs2 ++ segs3) [([], J)] inter1 res) in H1; [exact H1 | exact H2a].
+  - inversion Heval; subst; clear Heval.
+    replace (segs1 ++ segs2 ++ segs3)%list with ((segs1 ++ segs2) ++ segs3)%list in H0 by (rewrite app_assoc; reflexivity).
+    apply eval_rest_app_assoc in H0 as [inter12 [H12 H3]].
+    apply eval_rest_app_assoc in H12 as [inter1 [H1 H2]].
+    pose proof (eval_rest_app_compose segs2 segs3 inter1 inter12 res H2 H3) as H23.
+    pose proof (eval_rest_app_compose segs1 (segs2 ++ segs3) [([], J)] inter1 res H1 H23) as Hfinal.
+    rewrite app_assoc in Hfinal.
+    constructor.
+    replace (segs1 ++ segs2 ++ segs3)%list with ((segs1 ++ segs2) ++ segs3)%list by (rewrite app_assoc; reflexivity).
+    exact Hfinal.
+Qed.
+
+Lemma Forall2_In_left :
+  forall {A B} (R : A -> B -> Prop) (l1 : list A) (l2 : list B) (x : B),
+    Forall2 R l1 l2 ->
+    In x l2 ->
+    exists y, In y l1 /\ R y x.
+Proof.
+  intros A B R l1 l2 x HF Hin.
+  revert l2 x HF Hin.
+  induction l1 as [|a l1' IH]; intros l2 x HF Hin.
+  - inversion HF; subst. destruct Hin.
+  - inversion HF as [| ? ? ? l2' HR HF']; subst; clear HF.
+    simpl in Hin. destruct Hin as [Heq | Hin].
+    + subst x. exists a. split; [left; reflexivity | exact HR].
+    + specialize (IH l2' x HF' Hin) as [y' [Hin_y' HR_y']].
+      exists y'. split; [right; exact Hin_y' | exact HR_y'].
+Qed.
+
+Lemma concat_length_bound :
+  forall (A : Type) (lists : list (list A)) (bound : nat),
+    (forall l, In l lists -> (List.length l <= bound)%nat) ->
+    (List.length (List.concat lists) <= List.length lists * bound)%nat.
+Proof.
+  intros A lists bound Hbound.
+  induction lists as [|l lists' IH]; simpl.
+  - lia.
+  - rewrite app_length.
+    assert (Hthis: (List.length l <= bound)%nat) by (apply Hbound; left; reflexivity).
+    assert (IH': (List.length (List.concat lists') <= List.length lists' * bound)%nat).
+    { apply IH. intros l' Hin. apply Hbound. right. exact Hin. }
+    lia.
+Qed.
+
+Definition deterministic_selector (sel : selector) : bool :=
+  match sel with
+  | SelName _ => true
+  | SelIndex _ => true
+  | _ => false
+  end.
+
+Definition deterministic_segment (seg : segment) : bool :=
+  match seg with
+  | Child sels => forallb deterministic_selector sels
+  | Desc _ => false
+  end.
+
+Definition deterministic_query (q : query) : bool :=
+  forallb deterministic_segment (q_segs q).
+
+Lemma deterministic_selector_le1 :
+  forall sel p v res,
+    deterministic_selector sel = true ->
+    eval_selector sel (p, v) res ->
+    (List.length res <= 1)%nat.
+Proof.
+  intros sel p v res Hdet Heval.
+  destruct sel; simpl in Hdet; try discriminate;
+    inversion Heval; subst; simpl; lia.
+Qed.
+
 (* Module API *)
 
 Module API.
