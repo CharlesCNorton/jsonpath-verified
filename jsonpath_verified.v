@@ -2288,6 +2288,26 @@ Proof.
   - eexists. reflexivity.
 Qed.
 
+Corollary parent_before_children :
+  forall p v visited child_path child_val,
+    visit_order (p, v) visited ->
+    In (child_path, child_val) visited ->
+    child_path <> p ->
+    exists (prefix suffix : list node),
+      visited = List.app prefix (List.app [(p, v)] suffix) /\
+      In (child_path, child_val) suffix.
+Proof.
+  intros p v visited child_path child_val Hvisit Hin Hneq.
+  pose proof (root_visited_first p v visited Hvisit) as [rest Heq].
+  exists [], rest.
+  split.
+  - simpl. exact Heq.
+  - rewrite Heq in Hin. simpl in Hin.
+    destruct Hin as [Heq' | Hin'].
+    + inversion Heq'. subst. contradiction.
+    + exact Hin'.
+Qed.
+
 Lemma Permutation_app_cons_comm :
   forall {A} (l1 l2 : list A) (a : A),
     Permutation (List.app l1 (a :: l2)) (a :: List.app l1 l2).
@@ -2959,6 +2979,33 @@ Proof.
   exact Hle.
 Qed.
 
+Corollary linear_no_duplicate_paths :
+  forall q J p1 v1 p2 v2,
+    linear_query q = true ->
+    eval q J [(p1, v1); (p2, v2)] ->
+    False.
+Proof.
+  intros q J p1 v1 p2 v2 Hlin Hev.
+  pose proof (linear_query_arity_le1 q J Hlin) as Hle.
+  pose proof (linear_query_exact_equiv q J [(p1, v1); (p2, v2)] Hlin Hev) as Heq.
+  rewrite <- Heq in Hle.
+  simpl in Hle.
+  lia.
+Qed.
+
+Corollary linear_index_preservation :
+  forall segs J p v i idx,
+    linear_query (Query (segs ++ [Child [SelIndex i]])) = true ->
+    eval (Query segs) J [(p, JArr v)] ->
+    idx = (if i <? 0 then Z.of_nat (List.length v) + i else i) ->
+    (idx <? 0) = false ->
+    (idx >=? Z.of_nat (List.length v)) = false ->
+    exists val, nth_error v (Z.to_nat idx) = Some val.
+Proof.
+  intros segs J p v i idx Hlin Hpre Hidx Hl Hr.
+  apply nth_error_some_of_bools_Z; assumption.
+Qed.
+
 (* Search = Match with .* r .* at the holds_b level *)
 Lemma holds_b_search_as_match :
   forall a r p v,
@@ -3065,6 +3112,35 @@ Proof.
   assert (Heq : [(p1, v1)] = [(p2, v2)]) by (rewrite Eq1, Eq2; reflexivity).
   inversion Heq.
   split; reflexivity.
+Qed.
+
+Corollary linear_path_equality_decidable :
+  forall q J res1 res2,
+    linear_query q = true ->
+    eval q J res1 ->
+    eval q J res2 ->
+    {res1 = res2} + {res1 <> res2}.
+Proof.
+  intros q J res1 res2 Hlin H1 H2.
+  pose proof (linear_query_exact_equiv q J res1 Hlin H1) as Eq1.
+  pose proof (linear_query_exact_equiv q J res2 Hlin H2) as Eq2.
+  left.
+  rewrite Eq1, Eq2.
+  reflexivity.
+Qed.
+
+Corollary linear_no_branching :
+  forall q J p1 v1 p2 v2 rest,
+    linear_query q = true ->
+    eval q J ((p1, v1) :: (p2, v2) :: rest) ->
+    False.
+Proof.
+  intros q J p1 v1 p2 v2 rest Hlin Hev.
+  pose proof (linear_query_arity_le1 q J Hlin) as Hle.
+  pose proof (linear_query_exact_equiv q J ((p1, v1) :: (p2, v2) :: rest) Hlin Hev) as Heq.
+  rewrite <- Heq in Hle.
+  simpl in Hle.
+  lia.
 Qed.
 
 (* Module API *)
