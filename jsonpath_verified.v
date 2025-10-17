@@ -600,7 +600,7 @@ Inductive eval_selector : selector -> JSON.node -> list JSON.node -> Prop :=
       (idx >=? Z.of_nat (List.length xs)) = false ->
       nth_error xs (Z.to_nat idx) = Some v ->
       eval_selector (SelIndex z) (p, JArr xs)
-                    [ (List.app p [SIndex z], v) ]
+                    [ (List.app p [SIndex idx], v) ]
 | EvalSelIndexOutOfBounds :
     forall (z:Z) p xs idx,
       idx = (if z <? 0 then Z.of_nat (List.length xs) + z else z) ->
@@ -924,7 +924,7 @@ Fixpoint sel_exec_nf (sel:selector) (n:JSON.node) : list JSON.node :=
         let idx := if z <? 0 then Z.of_nat (List.length xs) + z else z in
         if (idx <? 0) || (idx >=? Z.of_nat (List.length xs)) then []
         else match nth_error xs (Z.to_nat idx) with
-             | Some v' => [ mk_node (List.app p [SIndex z]) v' ]
+             | Some v' => [ mk_node (List.app p [SIndex idx]) v' ]
              | None => []
              end
     | SelIndex _, _ => []
@@ -1045,7 +1045,7 @@ Fixpoint sel_exec (sel:selector) (n:JSON.node) {struct sel} : list JSON.node :=
       let idx := if z <? 0 then Z.of_nat (List.length xs) + z else z in
       if (idx <? 0) || (idx >=? Z.of_nat (List.length xs)) then []
       else match nth_error xs (Z.to_nat idx) with
-           | Some v' => [ mk_node (List.app p [SIndex z]) v' ]
+           | Some v' => [ mk_node (List.app p [SIndex idx]) v' ]
            | None => []
            end
   | SelIndex _, (_, _) => []
@@ -1260,7 +1260,7 @@ Qed.
 Example test_negative_index :
   let json := JArr [JQ 10; JQ 20; JQ 30] in
   exists result, eval (Query [Child [SelIndex (-1)]]) json result /\
-                 result = [([SIndex (-1)], JQ 30)].
+                 result = [([SIndex 2], JQ 30)].
 Proof.
   simpl. eexists. split; [| reflexivity].
   apply EvalQuery.
@@ -1724,11 +1724,11 @@ Example exec_naturalistic_last_project_names :
   =
   [
     ([SName "departments"; SIndex 0; SName "employees"; SIndex 0;
-      SName "projects"; SIndex (-1); SName "name"], JStr "drake");
+      SName "projects"; SIndex 1; SName "name"], JStr "drake");
     ([SName "departments"; SIndex 0; SName "employees"; SIndex 2;
-      SName "projects"; SIndex (-1); SName "name"], JStr "eagle");
+      SName "projects"; SIndex 1; SName "name"], JStr "eagle");
     ([SName "departments"; SIndex 1; SName "employees"; SIndex 0;
-      SName "projects"; SIndex (-1); SName "name"], JStr "crm")
+      SName "projects"; SIndex 0; SName "name"], JStr "crm")
   ].
 Proof. reflexivity. Qed.
 
@@ -2220,7 +2220,7 @@ Lemma eval_selindex_in_bounds :
     (idx <? 0) = false ->
     (idx >=? Z.of_nat (List.length xs)) = false ->
     nth_error xs (Z.to_nat idx) = Some v' ->
-    eval_selector (SelIndex i) (p, JArr xs) [ (List.app p [SIndex i], v') ].
+    eval_selector (SelIndex i) (p, JArr xs) [ (List.app p [SIndex idx], v') ].
 Proof.
   intros i p xs idx v' Hidx Hlt0 Hge Hnth.
   eapply EvalSelIndex with (idx := idx); eauto.
@@ -2326,7 +2326,7 @@ Lemma nf_selindex_success_eq :
     (idx >=? Z.of_nat (List.length xs)) = false ->
     nth_error xs (Z.to_nat idx) = Some v' ->
     Exec.sel_exec_nf (SelIndex i) (p, JArr xs)
-    = [ (List.app p [SIndex i], v') ].
+    = [ (List.app p [SIndex idx], v') ].
 Proof.
   intros p xs i idx v' Hidx Hlt0 Hge Hnth.
   simpl.
