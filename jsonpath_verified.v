@@ -1312,6 +1312,358 @@ Fixpoint wf_fexpr (f:fexpr) : bool :=
 End Typing.
 
 (* ------------------------------------------------------------ *)
+(* Typing Soundness                                             *)
+(* ------------------------------------------------------------ *)
+
+(** Type membership: primitive value has given type. *)
+Definition prim_has_type (p : prim) (t : Typing.primty) : Prop :=
+  match p, t with
+  | PNull, Typing.TNull => True
+  | PBool _, Typing.TBool => True
+  | PNum _, Typing.TNum => True
+  | PStr _, Typing.TStr => True
+  | _, Typing.TAnyPrim => True
+  | _, _ => False
+  end.
+
+Lemma prim_has_type_null : prim_has_type PNull Typing.TNull.
+Proof. simpl. auto. Qed.
+
+Lemma prim_has_type_bool : forall b, prim_has_type (PBool b) Typing.TBool.
+Proof. intros. simpl. auto. Qed.
+
+Lemma prim_has_type_num : forall n, prim_has_type (PNum n) Typing.TNum.
+Proof. intros. simpl. auto. Qed.
+
+Lemma prim_has_type_str : forall s, prim_has_type (PStr s) Typing.TStr.
+Proof. intros. simpl. auto. Qed.
+
+Lemma prim_has_type_any : forall p, prim_has_type p Typing.TAnyPrim.
+Proof. intros. destruct p; simpl; auto. Qed.
+
+Lemma aprim_type : forall p0, prim_has_type p0 (Typing.aety (APrim p0)).
+Proof. intros. destruct p0; simpl; auto using prim_has_type_null, prim_has_type_bool, prim_has_type_num, prim_has_type_str. Qed.
+
+Lemma acount_type : forall q, Typing.aety (ACount q) = Typing.TNum.
+Proof. reflexivity. Qed.
+
+Lemma avalue_type : forall q, Typing.aety (AValue q) = Typing.TAnyPrim.
+Proof. reflexivity. Qed.
+
+Lemma alengthv_type : forall q, Typing.aety (ALengthV q) = Typing.TNum.
+Proof. reflexivity. Qed.
+
+Lemma prim_of_value_null : prim_of_value JNull = Some PNull.
+Proof. reflexivity. Qed.
+
+Lemma prim_of_value_bool : forall b, prim_of_value (JBool b) = Some (PBool b).
+Proof. reflexivity. Qed.
+
+Lemma prim_of_value_num : forall n, prim_of_value (JNum n) = Some (PNum n).
+Proof. reflexivity. Qed.
+
+Lemma prim_of_value_str : forall s, prim_of_value (JStr s) = Some (PStr s).
+Proof. reflexivity. Qed.
+
+Lemma prim_of_value_arr : forall xs, prim_of_value (JArr xs) = None.
+Proof. reflexivity. Qed.
+
+Lemma prim_of_value_obj : forall fs, prim_of_value (JObject fs) = None.
+Proof. reflexivity. Qed.
+
+Lemma aeval_aprim : forall p0 v, Exec.aeval (APrim p0) v = Some p0.
+Proof. reflexivity. Qed.
+
+Lemma aeval_acount : forall q v, Exec.aeval (ACount q) v = Some (PNum (Q_of_nat (List.length (Exec.eval_exec_impl Exec.sel_exec q v)))).
+Proof. reflexivity. Qed.
+
+Lemma aeval_avalue_none : forall q v, Exec.eval_exec_impl Exec.sel_exec q v = [] -> Exec.aeval (AValue q) v = None.
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma aeval_avalue_multi : forall q v n1 n2 rest, Exec.eval_exec_impl Exec.sel_exec q v = n1 :: n2 :: rest -> Exec.aeval (AValue q) v = None.
+Proof. intros. simpl. rewrite H. destruct n1. reflexivity. Qed.
+
+Lemma aeval_avalue_single : forall q v p1 v1, Exec.eval_exec_impl Exec.sel_exec q v = [(p1, v1)] -> Exec.aeval (AValue q) v = prim_of_value v1.
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma aeval_alengthv_none : forall q v, Exec.eval_exec_impl Exec.sel_exec q v = [] -> Exec.aeval (ALengthV q) v = None.
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma aeval_alengthv_multi : forall q v n1 n2 rest, Exec.eval_exec_impl Exec.sel_exec q v = n1 :: n2 :: rest -> Exec.aeval (ALengthV q) v = None.
+Proof. intros. simpl. rewrite H. destruct n1 as [p v0]. destruct v0; reflexivity. Qed.
+
+Lemma aeval_alengthv_str : forall q v p1 s, Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JStr s)] -> Exec.aeval (ALengthV q) v = Some (PNum (Q_of_nat (String.length s))).
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma aeval_alengthv_arr : forall q v p1 xs, Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JArr xs)] -> Exec.aeval (ALengthV q) v = Some (PNum (Q_of_nat (List.length xs))).
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma aeval_alengthv_obj : forall q v p1 fs, Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JObject fs)] -> Exec.aeval (ALengthV q) v = Some (PNum (Q_of_nat (List.length fs))).
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma aeval_alengthv_null : forall q v p1, Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JNull)] -> Exec.aeval (ALengthV q) v = None.
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma aeval_alengthv_bool : forall q v p1 b, Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JBool b)] -> Exec.aeval (ALengthV q) v = None.
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma aeval_alengthv_num : forall q v p1 n, Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JNum n)] -> Exec.aeval (ALengthV q) v = None.
+Proof. intros. simpl. rewrite H. reflexivity. Qed.
+
+Lemma avalue_singleton_has_anyprim_type :
+  forall q v p1 v1 p,
+    Exec.eval_exec_impl Exec.sel_exec q v = [(p1, v1)] ->
+    Exec.aeval (AValue q) v = Some p ->
+    prim_has_type p Typing.TAnyPrim.
+Proof.
+  intros q v p1 v1 p E Heval.
+  rewrite (aeval_avalue_single q v p1 v1 E) in Heval.
+  unfold prim_of_value in Heval.
+  destruct v1; inversion Heval; subst; apply prim_has_type_any.
+Qed.
+
+Lemma alengthv_str_has_num_type :
+  forall q v p1 s p,
+    Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JStr s)] ->
+    Exec.aeval (ALengthV q) v = Some p ->
+    prim_has_type p Typing.TNum.
+Proof.
+  intros q v p1 s p E Heval.
+  rewrite (aeval_alengthv_str q v p1 s E) in Heval.
+  inversion Heval; subst.
+  apply prim_has_type_num.
+Qed.
+
+Lemma alengthv_arr_has_num_type :
+  forall q v p1 l p,
+    Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JArr l)] ->
+    Exec.aeval (ALengthV q) v = Some p ->
+    prim_has_type p Typing.TNum.
+Proof.
+  intros q v p1 l p E Heval.
+  rewrite (aeval_alengthv_arr q v p1 l E) in Heval.
+  inversion Heval; subst.
+  apply prim_has_type_num.
+Qed.
+
+Lemma alengthv_obj_has_num_type :
+  forall q v p1 l p,
+    Exec.eval_exec_impl Exec.sel_exec q v = [(p1, JObject l)] ->
+    Exec.aeval (ALengthV q) v = Some p ->
+    prim_has_type p Typing.TNum.
+Proof.
+  intros q v p1 l p E Heval.
+  rewrite (aeval_alengthv_obj q v p1 l E) in Heval.
+  inversion Heval; subst.
+  apply prim_has_type_num.
+Qed.
+
+(** Arithmetic expression type soundness: aeval result matches predicted type. *)
+Theorem aeval_type_soundness :
+  forall a v p,
+    Exec.aeval a v = Some p ->
+    prim_has_type p (Typing.aety a).
+Proof.
+  intros a v p Heval.
+  destruct a as [p0 | q1 | q2 | q3].
+  - rewrite aeval_aprim in Heval. inversion Heval; subst. apply aprim_type.
+  - rewrite aeval_acount in Heval. inversion Heval; subst. rewrite acount_type. apply prim_has_type_num.
+  - rewrite avalue_type. destruct (Exec.eval_exec_impl Exec.sel_exec q2 v) as [|[p1 v1] rest] eqn:E.
+    + rewrite (aeval_avalue_none q2 v E) in Heval. inversion Heval.
+    + destruct rest as [|n2 rest'].
+      * eapply avalue_singleton_has_anyprim_type; eauto.
+      * rewrite (aeval_avalue_multi q2 v (p1,v1) n2 rest' E) in Heval. inversion Heval.
+  - rewrite alengthv_type. destruct (Exec.eval_exec_impl Exec.sel_exec q3 v) as [|[p1 v1] rest] eqn:E.
+    + rewrite (aeval_alengthv_none q3 v E) in Heval. inversion Heval.
+    + destruct rest as [|n2 rest'].
+      * destruct v1.
+        -- rewrite (aeval_alengthv_null q3 v p1 E) in Heval. inversion Heval.
+        -- rewrite (aeval_alengthv_bool q3 v p1 b E) in Heval. inversion Heval.
+        -- rewrite (aeval_alengthv_num q3 v p1 n E) in Heval. inversion Heval.
+        -- eapply alengthv_str_has_num_type; eauto.
+        -- eapply alengthv_arr_has_num_type; eauto.
+        -- eapply alengthv_obj_has_num_type; eauto.
+      * rewrite (aeval_alengthv_multi q3 v (p1,v1) n2 rest' E) in Heval. inversion Heval.
+Qed.
+
+(** Type compatibility ensures comparison operations are well-defined. *)
+Lemma comparable_types_defined :
+  forall t1 t2 p1 p2 op,
+    Typing.comparable t1 t2 = true ->
+    prim_has_type p1 t1 ->
+    prim_has_type p2 t2 ->
+    exists result : bool, cmp_prim op p1 p2 = result.
+Proof.
+  intros t1 t2 p1 p2 op Hcomp Ht1 Ht2.
+  destruct t1, t2; simpl in Hcomp; try discriminate;
+  destruct p1, p2; simpl in Ht1, Ht2; try contradiction;
+  eexists; reflexivity.
+Qed.
+
+(** Well-formed comparison operations have compatible operand types. *)
+Theorem wf_fcmp_operands_compatible :
+  forall op a b v pa pb,
+    Typing.wf_fexpr (FCmp op a b) = true ->
+    Exec.aeval a v = Some pa ->
+    Exec.aeval b v = Some pb ->
+    exists result : bool, cmp_prim op pa pb = result.
+Proof.
+  intros op a b v pa pb Hwf Ha Hb.
+  simpl in Hwf.
+  pose proof (aeval_type_soundness a v pa Ha) as Hta.
+  pose proof (aeval_type_soundness b v pb Hb) as Htb.
+  eapply comparable_types_defined; eauto.
+Qed.
+
+(** Well-formed match expressions produce strings or fail gracefully. *)
+Lemma any_prim_type_cases :
+  forall p,
+    prim_has_type p Typing.TAnyPrim ->
+    (exists s, p = PStr s) \/ (exists b, p = PBool b) \/ (exists n, p = PNum n) \/ p = PNull.
+Proof.
+  intros p Htype.
+  destruct p; eauto.
+Qed.
+
+Theorem wf_fmatch_type_safe :
+  forall a r v,
+    Typing.wf_fexpr (FMatch a r) = true ->
+    Exec.aeval a v = None \/
+    (exists s, Exec.aeval a v = Some (PStr s)) \/
+    (Exec.aeval a v = Some PNull) \/
+    (exists b, Exec.aeval a v = Some (PBool b)) \/
+    (exists n, Exec.aeval a v = Some (PNum n)).
+Proof.
+  intros a r v Hwf.
+  simpl in Hwf.
+  destruct (Exec.aeval a v) as [p|] eqn:E.
+  - destruct (Typing.aety a) eqn:Ety; try discriminate.
+    + pose proof (aeval_type_soundness a v p E) as Ht.
+      rewrite Ety in Ht.
+      destruct p; try contradiction.
+      right; left. eexists; reflexivity.
+    + pose proof (aeval_type_soundness a v p E) as Ht.
+      rewrite Ety in Ht.
+      pose proof (any_prim_type_cases p Ht) as Hcases.
+      destruct Hcases as [[s Hs]|[[b Hb]|[[n Hn]|Hnull]]]; subst; auto.
+      * right; left. eexists; reflexivity.
+      * right; right; right; left. eexists; reflexivity.
+      * right; right; right; right. eexists; reflexivity.
+  - left; reflexivity.
+Qed.
+
+(** Well-formed search expressions produce strings or fail gracefully. *)
+Theorem wf_fsearch_type_safe :
+  forall a r v,
+    Typing.wf_fexpr (FSearch a r) = true ->
+    Exec.aeval a v = None \/
+    (exists s, Exec.aeval a v = Some (PStr s)) \/
+    (Exec.aeval a v = Some PNull) \/
+    (exists b, Exec.aeval a v = Some (PBool b)) \/
+    (exists n, Exec.aeval a v = Some (PNum n)).
+Proof.
+  intros a r v Hwf.
+  simpl in Hwf.
+  destruct (Exec.aeval a v) as [p|] eqn:E.
+  - destruct (Typing.aety a) eqn:Ety; try discriminate.
+    + pose proof (aeval_type_soundness a v p E) as Ht.
+      rewrite Ety in Ht.
+      destruct p; try contradiction.
+      right; left. eexists; reflexivity.
+    + pose proof (aeval_type_soundness a v p E) as Ht.
+      rewrite Ety in Ht.
+      pose proof (any_prim_type_cases p Ht) as Hcases.
+      destruct Hcases as [[s Hs]|[[b Hb]|[[n Hn]|Hnull]]]; subst; auto.
+      * right; left. eexists; reflexivity.
+      * right; right; right; left. eexists; reflexivity.
+      * right; right; right; right. eexists; reflexivity.
+  - left; reflexivity.
+Qed.
+
+Lemma reassoc_match_type :
+  forall a r v,
+    Typing.wf_fexpr (FMatch a r) = true ->
+    (Exec.aeval a v = None \/
+    (exists s, Exec.aeval a v = Some (PStr s)) \/
+    (Exec.aeval a v = Some PNull) \/
+    (exists b, Exec.aeval a v = Some (PBool b)) \/
+    (exists n, Exec.aeval a v = Some (PNum n))) ->
+    (Exec.aeval a v = None \/
+    (exists s,
+       Exec.aeval a v = Some (PStr s) \/
+       Exec.aeval a v = Some PNull \/
+       (exists b,
+          Exec.aeval a v = Some (PBool b) \/
+          (exists n, Exec.aeval a v = Some (PNum n))))).
+Proof.
+  intros a r v Hwf H.
+  destruct H as [H|[[s H]|[H|[[b H]|[n H]]]]]; auto.
+  - right. exists s. left. exact H.
+  - right. exists ""%string. right. left. exact H.
+  - right. exists ""%string. right. right. exists b. left. exact H.
+  - right. exists ""%string. right. right. exists true. right. exists n. exact H.
+Qed.
+
+Lemma reassoc_search_type :
+  forall a r v,
+    Typing.wf_fexpr (FSearch a r) = true ->
+    (Exec.aeval a v = None \/
+    (exists s, Exec.aeval a v = Some (PStr s)) \/
+    (Exec.aeval a v = Some PNull) \/
+    (exists b, Exec.aeval a v = Some (PBool b)) \/
+    (exists n, Exec.aeval a v = Some (PNum n))) ->
+    (Exec.aeval a v = None \/
+    (exists s,
+       Exec.aeval a v = Some (PStr s) \/
+       Exec.aeval a v = Some PNull \/
+       (exists b,
+          Exec.aeval a v = Some (PBool b) \/
+          (exists n, Exec.aeval a v = Some (PNum n))))).
+Proof.
+  intros a r v Hwf H.
+  destruct H as [H|[[s H]|[H|[[b H]|[n H]]]]]; auto.
+  - right. exists s. left. exact H.
+  - right. exists ""%string. right. left. exact H.
+  - right. exists ""%string. right. right. exists b. left. exact H.
+  - right. exists ""%string. right. right. exists true. right. exists n. exact H.
+Qed.
+
+(** Type soundness: well-formed filters perform type-safe operations. *)
+Theorem typing_soundness :
+  forall f,
+    Typing.wf_fexpr f = true ->
+    forall n,
+      (forall op a b, f = FCmp op a b ->
+        forall v pa pb,
+          n = (@fst JSON.path JSON.value n, v) ->
+          Exec.aeval a v = Some pa ->
+          Exec.aeval b v = Some pb ->
+          exists result : bool, cmp_prim op pa pb = result) /\
+      (forall a r, f = FMatch a r ->
+        forall v,
+          n = (@fst JSON.path JSON.value n, v) ->
+          Exec.aeval a v = None \/
+          exists s, Exec.aeval a v = Some (PStr s) \/
+          Exec.aeval a v = Some PNull \/
+          exists b, Exec.aeval a v = Some (PBool b) \/
+          exists n, Exec.aeval a v = Some (PNum n)) /\
+      (forall a r, f = FSearch a r ->
+        forall v,
+          n = (@fst JSON.path JSON.value n, v) ->
+          Exec.aeval a v = None \/
+          exists s, Exec.aeval a v = Some (PStr s) \/
+          Exec.aeval a v = Some PNull \/
+          exists b, Exec.aeval a v = Some (PBool b) \/
+          exists n, Exec.aeval a v = Some (PNum n)).
+Proof.
+  intros f Hwf n.
+  split; [|split].
+  - intros op a b Heq v pa pb _ Ha Hb. subst f. eapply wf_fcmp_operands_compatible; eauto.
+  - intros a r0 Heq v _. subst f. eapply (reassoc_match_type a r0 v); eauto. apply (wf_fmatch_type_safe a r0 v); auto.
+  - intros a r0 Heq v _. subst f. eapply (reassoc_search_type a r0 v); eauto. apply (wf_fsearch_type_safe a r0 v); auto.
+Qed.
+
+(* ------------------------------------------------------------ *)
 (* Bridge lemma: selector -> Child [selector]                   *)
 (* ------------------------------------------------------------ *)
 
