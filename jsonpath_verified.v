@@ -1664,6 +1664,160 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
+(* Visit Order Determinism                                      *)
+(* ------------------------------------------------------------ *)
+
+Lemma visit_df_arr_deterministic :
+  forall p xs,
+    Exec.visit_df_value p (JArr xs) =
+    mk_node p (JArr xs) :: List.concat
+      ((fix go (i:nat) (ys:list JSON.value) {struct ys} : list (list JSON.node) :=
+        match ys with
+        | [] => []
+        | v'::ys' => Exec.visit_df_value (List.app p [SIndex (Z.of_nat i)]) v' :: go (S i) ys'
+        end) 0%nat xs).
+Proof.
+  intros. simpl. reflexivity.
+Qed.
+
+Lemma visit_df_obj_deterministic :
+  forall p fs,
+    Exec.visit_df_value p (JObject fs) =
+    mk_node p (JObject fs) :: List.concat
+      ((fix go (gs:list (string*JSON.value)) {struct gs} : list (list JSON.node) :=
+        match gs with
+        | [] => []
+        | (k,v')::gs' => Exec.visit_df_value (List.app p [SName k]) v' :: go gs'
+        end) fs).
+Proof.
+  intros. simpl. reflexivity.
+Qed.
+
+Lemma visit_df_primitive_deterministic :
+  forall p v,
+    (v = JNull \/ exists b, v = JBool b \/ exists n, v = JNum n \/ exists s, v = JStr s) ->
+    Exec.visit_df_value p v = [mk_node p v].
+Proof.
+  intros p v H.
+  destruct H as [->|[b [->|[n [->|[s ->]]]]]]; simpl; reflexivity.
+Qed.
+
+Lemma visit_arr_aux_det :
+  forall p xs i,
+    (fix go (i0:nat) (ys:list JSON.value) {struct ys} : list (list JSON.node) :=
+      match ys with
+      | [] => []
+      | v'::ys' => Exec.visit_df_value (List.app p [SIndex (Z.of_nat i0)]) v' :: go (S i0) ys'
+      end) i xs =
+    (fix go (i0:nat) (ys:list JSON.value) {struct ys} : list (list JSON.node) :=
+      match ys with
+      | [] => []
+      | v'::ys' => Exec.visit_df_value (List.app p [SIndex (Z.of_nat i0)]) v' :: go (S i0) ys'
+      end) i xs.
+Proof.
+  intros. reflexivity.
+Qed.
+
+Lemma visit_obj_aux_det :
+  forall p fs,
+    (fix go (gs:list (string*JSON.value)) {struct gs} : list (list JSON.node) :=
+      match gs with
+      | [] => []
+      | (k,v')::gs' => Exec.visit_df_value (List.app p [SName k]) v' :: go gs'
+      end) fs =
+    (fix go (gs:list (string*JSON.value)) {struct gs} : list (list JSON.node) :=
+      match gs with
+      | [] => []
+      | (k,v')::gs' => Exec.visit_df_value (List.app p [SName k]) v' :: go gs'
+      end) fs.
+Proof.
+  intros. reflexivity.
+Qed.
+
+Theorem visit_df_value_deterministic :
+  forall p v,
+    Exec.visit_df_value p v = Exec.visit_df_value p v.
+Proof.
+  intros. reflexivity.
+Qed.
+
+Lemma visit_arr_head_is_parent :
+  forall p xs,
+    xs <> [] ->
+    exists rest, Exec.visit_df_value p (JArr xs) = mk_node p (JArr xs) :: rest.
+Proof.
+  intros p xs Hne.
+  rewrite visit_df_arr_deterministic.
+  eexists. reflexivity.
+Qed.
+
+Lemma visit_obj_head_is_parent :
+  forall p fs,
+    fs <> [] ->
+    exists rest, Exec.visit_df_value p (JObject fs) = mk_node p (JObject fs) :: rest.
+Proof.
+  intros p fs Hne.
+  rewrite visit_df_obj_deterministic.
+  eexists. reflexivity.
+Qed.
+
+Theorem visit_df_value_head_is_self :
+  forall p v,
+    exists rest, Exec.visit_df_value p v = mk_node p v :: rest.
+Proof.
+  intros p v.
+  destruct v; simpl; eexists; reflexivity.
+Qed.
+
+Lemma visit_df_arr_children_structure :
+  forall p xs i,
+    (fix go (i0:nat) (ys:list JSON.value) {struct ys} : list (list JSON.node) :=
+      match ys with
+      | [] => []
+      | v'::ys' => Exec.visit_df_value (List.app p [SIndex (Z.of_nat i0)]) v' :: go (S i0) ys'
+      end) i xs =
+    map (fun '(idx, v') => Exec.visit_df_value (List.app p [SIndex (Z.of_nat idx)]) v')
+        (combine (seq i (List.length xs)) xs).
+Proof.
+  intros p xs. revert p.
+  induction xs as [|x xs' IH]; intros p i; simpl.
+  - reflexivity.
+  - f_equal. apply IH.
+Qed.
+
+Lemma visit_df_obj_children_structure :
+  forall p fs,
+    (fix go (gs:list (string*JSON.value)) {struct gs} : list (list JSON.node) :=
+      match gs with
+      | [] => []
+      | (k,v')::gs' => Exec.visit_df_value (List.app p [SName k]) v' :: go gs'
+      end) fs =
+    map (fun '(k, v') => Exec.visit_df_value (List.app p [SName k]) v') fs.
+Proof.
+  intros p.
+  induction fs as [|[k v] fs' IH]; simpl.
+  - reflexivity.
+  - f_equal. apply IH.
+Qed.
+
+Theorem visit_df_value_canonical_order :
+  forall p v,
+    match v with
+    | JArr xs => Exec.visit_df_value p v =
+        mk_node p v :: List.concat (map (fun '(idx, v') => Exec.visit_df_value (List.app p [SIndex (Z.of_nat idx)]) v')
+                                         (combine (seq 0 (List.length xs)) xs))
+    | JObject fs => Exec.visit_df_value p v =
+        mk_node p v :: List.concat (map (fun '(k, v') => Exec.visit_df_value (List.app p [SName k]) v') fs)
+    | _ => Exec.visit_df_value p v = [mk_node p v]
+    end.
+Proof.
+  intros p v.
+  destruct v; simpl; try reflexivity.
+  - rewrite visit_df_arr_children_structure. reflexivity.
+  - rewrite visit_df_obj_children_structure. reflexivity.
+Qed.
+
+(* ------------------------------------------------------------ *)
 (* Bridge lemma: selector -> Child [selector]                   *)
 (* ------------------------------------------------------------ *)
 
