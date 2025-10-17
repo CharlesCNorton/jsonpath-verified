@@ -3584,6 +3584,20 @@ Proof.
   destruct pa as [| | | s]; cbn [Regex.regex_search]; reflexivity.
 Qed.
 
+(** Relational version: search is equivalent to match with .*r.* at the specification level. *)
+Theorem search_as_match_relational :
+  forall a r n,
+    holds (FSearch a r) n <-> holds (FMatch a (RCat (RStar RAny) (RCat r (RStar RAny)))) n.
+Proof.
+  intros a r n. split; intro H.
+  - inversion H; subst.
+    unfold regex_search in H3.
+    eapply HoldsMatch; eauto.
+  - inversion H; subst.
+    unfold regex_search.
+    eapply HoldsSearch; eauto.
+Qed.
+
 (**
   Wildcard Completeness: For every child of an object/array,
   wildcard will include it in results.
