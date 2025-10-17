@@ -279,6 +279,144 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
+(* Slice bounds correctness                                     *)
+(* ------------------------------------------------------------ *)
+
+Lemma clamp_bounds :
+  forall x lo hi,
+    lo <= hi ->
+    lo <= clamp x lo hi <= hi.
+Proof.
+  intros x lo hi Hle.
+  unfold clamp.
+  split.
+  - apply Z.le_max_l.
+  - apply Z.max_lub.
+    + assumption.
+    + apply Z.le_min_l.
+Qed.
+
+Lemma clamp_in_range :
+  forall x lo hi,
+    lo <= x <= hi ->
+    clamp x lo hi = x.
+Proof.
+  intros x lo hi [Hlo Hhi].
+  unfold clamp.
+  rewrite Z.min_r by assumption.
+  rewrite Z.max_r by assumption.
+  reflexivity.
+Qed.
+
+Lemma up_by_spec :
+  forall i stop step fuel k,
+    step > 0 ->
+    In k (up_by i stop step fuel) ->
+    i <= k < stop /\ exists n, k = i + Z.of_nat n * step.
+Proof.
+  intros i stop step fuel k Hstep Hin.
+  generalize dependent i.
+  induction fuel as [|fuel' IH]; intros i Hin.
+  - inversion Hin.
+  - simpl in Hin. destruct (Z.ltb_spec i stop) as [Hlt|Hge].
+    + destruct Hin as [Heq | Hin'].
+      * subst k. split.
+        -- split; [lia | assumption].
+        -- exists 0%nat. lia.
+      * specialize (IH (i + step) Hin').
+        destruct IH as [[Hlo Hhi] [n Heq]].
+        split.
+        -- split; lia.
+        -- exists (S n). rewrite Heq. rewrite Nat2Z.inj_succ. lia.
+    + inversion Hin.
+Qed.
+
+Lemma down_by_spec :
+  forall i stop step fuel k,
+    step < 0 ->
+    In k (down_by i stop step fuel) ->
+    stop < k <= i /\ exists n, k = i + Z.of_nat n * step.
+Proof.
+  intros i stop step fuel k Hstep Hin.
+  generalize dependent i.
+  induction fuel as [|fuel' IH]; intros i Hin.
+  - inversion Hin.
+  - simpl in Hin. destruct (Z.ltb_spec stop i) as [Hlt|Hge].
+    + destruct Hin as [Heq | Hin'].
+      * subst k. split.
+        -- split; [assumption | lia].
+        -- exists 0%nat. lia.
+      * specialize (IH (i + step) Hin').
+        destruct IH as [[Hlo Hhi] [n Heq]].
+        split.
+        -- split; lia.
+        -- exists (S n). rewrite Heq. rewrite Nat2Z.inj_succ. lia.
+    + inversion Hin.
+Qed.
+
+Theorem normalize_slice_bounds_step_preserved :
+  forall len start endo stp s e st,
+    normalize_slice_bounds len start endo stp = (s, e, st) ->
+    st = stp.
+Proof.
+  intros len start endo stp s e st Hnorm.
+  unfold normalize_slice_bounds in Hnorm.
+  destruct (Z.eqb stp 0) eqn:Heq.
+  - inversion Hnorm; subst. apply Z.eqb_eq in Heq. rewrite Heq. reflexivity.
+  - destruct (Z.ltb_spec 0 stp);
+    destruct start as [sv|]; destruct endo as [ev|];
+    try (destruct (Z.ltb_spec sv 0));
+    try (destruct (Z.ltb_spec ev 0));
+    destruct (Z.ltb_spec 0 stp); inversion Hnorm; reflexivity.
+Qed.
+
+Theorem normalize_slice_bounds_zero_case :
+  forall len start endo s e st,
+    normalize_slice_bounds len start endo 0 = (s, e, st) ->
+    s = 0 /\ e = 0 /\ st = 0.
+Proof.
+  intros len start endo s e st Hnorm.
+  unfold normalize_slice_bounds in Hnorm.
+  simpl in Hnorm. inversion Hnorm. auto.
+Qed.
+
+Theorem normalize_slice_bounds_range_pos :
+  forall len start endo stp s e st,
+    stp > 0 ->
+    normalize_slice_bounds len start endo stp = (s, e, st) ->
+    0 <= s <= Z.of_nat len /\ 0 <= e <= Z.of_nat len.
+Proof.
+  intros len start endo stp s e st Hpos Hnorm.
+  unfold normalize_slice_bounds in Hnorm.
+  assert (Z.eqb stp 0 = false) by (apply Z.eqb_neq; lia).
+  rewrite H in Hnorm. clear H.
+  set (lz := Z.of_nat len) in *.
+  destruct start as [sv|]; destruct endo as [ev|];
+  try (destruct (Z.ltb_spec sv 0));
+  try (destruct (Z.ltb_spec ev 0));
+  destruct (Z.ltb_spec 0 stp); try lia;
+  inversion Hnorm; subst; split; apply clamp_bounds; lia.
+Qed.
+
+Theorem normalize_slice_bounds_range_neg :
+  forall len start endo stp s e st,
+    stp < 0 ->
+    normalize_slice_bounds len start endo stp = (s, e, st) ->
+    -1 <= s <= Z.of_nat len - 1 /\ -1 <= e <= Z.of_nat len - 1.
+Proof.
+  intros len start endo stp s e st Hneg Hnorm.
+  unfold normalize_slice_bounds in Hnorm.
+  assert (Z.eqb stp 0 = false) by (apply Z.eqb_neq; lia).
+  rewrite H in Hnorm. clear H.
+  set (lz := Z.of_nat len) in *.
+  destruct start as [sv|]; destruct endo as [ev|];
+  try (destruct (Z.ltb_spec sv 0));
+  try (destruct (Z.ltb_spec ev 0));
+  destruct (Z.ltb_spec 0 stp); try lia;
+  inversion Hnorm; subst; split; apply clamp_bounds; lia.
+Qed.
+
+(* ------------------------------------------------------------ *)
 (* Helper functions for relational semantics                    *)
 (* ------------------------------------------------------------ *)
 
@@ -2589,6 +2727,7 @@ Proof.
       * simpl. apply Permutation_app_head. exact IHfs.
 Qed.
 
+
 Import JSON JSONPath Exec JSONPath_Equiv.
 
 (** ** List auxiliaries *)
@@ -3660,6 +3799,7 @@ Proof.
     + specialize (IH l2' x HF' Hin) as [y' [Hin_y' HR_y']].
       exists y'. split; [right; exact Hin_y' | exact HR_y'].
 Qed.
+
 
 Lemma concat_length_bound :
   forall (A : Type) (lists : list (list A)) (bound : nat),
