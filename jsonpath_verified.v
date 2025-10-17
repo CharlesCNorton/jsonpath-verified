@@ -463,7 +463,6 @@ Proof.
     exact Hlt.
 Qed.
 
-(** The length of slice_positions is bounded by the array length. *)
 
 (* ------------------------------------------------------------ *)
 (* Helper functions for relational semantics                    *)
