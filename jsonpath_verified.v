@@ -463,6 +463,75 @@ Proof.
     exact Hlt.
 Qed.
 
+(** Helper: up_by generates at most (e-s)/st + 1 elements when st > 0. *)
+Lemma up_by_length_bound :
+  forall s e st fuel,
+    (0 < st)%Z ->
+    (List.length (up_by s e st fuel) <= S fuel)%nat.
+Proof.
+  intros s e st fuel Hst.
+  revert s e. induction fuel as [|fuel' IH]; intros s e.
+  - simpl. lia.
+  - simpl. destruct (Z.ltb_spec s e).
+    + simpl. apply le_n_S. apply IH.
+    + simpl. apply Nat.le_0_l.
+Qed.
+
+(** Helper: down_by generates at most (s-e)/(-st) + 1 elements when st < 0. *)
+Lemma down_by_length_bound :
+  forall s e st fuel,
+    (st < 0)%Z ->
+    (List.length (down_by s e st fuel) <= S fuel)%nat.
+Proof.
+  intros s e st fuel Hst.
+  revert s e. induction fuel as [|fuel' IH]; intros s e.
+  - simpl. lia.
+  - simpl. destruct (Z.ltb_spec e s).
+    + simpl. apply le_n_S. apply IH.
+    + simpl. apply Nat.le_0_l.
+Qed.
+
+(** Helper: filtering reduces or maintains length. *)
+Lemma fold_right_filter_length_le :
+  forall zs lz,
+    (List.length (fold_right (fun z acc => if (0 <=? z)%Z && (z <? lz)%Z then Z.to_nat z :: acc else acc) [] zs)
+     <= List.length zs)%nat.
+Proof.
+  intros zs lz.
+  induction zs as [|z zs' IH].
+  - simpl. apply Nat.le_refl.
+  - simpl. destruct ((0 <=? z)%Z && (z <? lz)%Z).
+    + simpl. apply le_n_S. exact IH.
+    + transitivity (List.length zs'); [exact IH | apply Nat.le_succ_diag_r].
+Qed.
+
+(** Helper: arithmetic progression length bounded by fuel. *)
+Lemma up_by_fuel_bound :
+  forall s e st fuel,
+    (List.length (up_by s e st fuel) <= fuel)%nat.
+Proof.
+  intros s e st fuel.
+  revert s e. induction fuel as [|fuel' IH]; intros s e.
+  - simpl. apply Nat.le_refl.
+  - simpl. destruct (Z.ltb_spec s e).
+    + simpl. apply le_n_S. apply IH.
+    + simpl. apply Nat.le_0_l.
+Qed.
+
+(** Helper: down progression length bounded by fuel. *)
+Lemma down_by_fuel_bound :
+  forall s e st fuel,
+    (List.length (down_by s e st fuel) <= fuel)%nat.
+Proof.
+  intros s e st fuel.
+  revert s e. induction fuel as [|fuel' IH]; intros s e.
+  - simpl. apply Nat.le_refl.
+  - simpl. destruct (Z.ltb_spec e s).
+    + simpl. apply le_n_S. apply IH.
+    + simpl. apply Nat.le_0_l.
+Qed.
+
+
 
 (* ------------------------------------------------------------ *)
 (* Helper functions for relational semantics                    *)
