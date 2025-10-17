@@ -4841,6 +4841,152 @@ Definition node_eqb (n1 n2:JSON.node) : bool :=
   let '(p2,v2) := n2 in
   andb (path_eqb p1 p2) (value_eqb v1 v2).
 
+Lemma Qeqb_eq : forall q1 q2, Qeqb q1 q2 = true -> q1 == q2.
+Proof.
+  intros q1 q2. unfold Qeqb.
+  destruct (Qcompare q1 q2) eqn:Hcmp; intro H; try discriminate H.
+  destruct (Qcompare_spec q1 q2) as [Heq|Hlt|Hgt]; try discriminate Hcmp.
+  exact Heq.
+Qed.
+
+Lemma Qeq_eqb : forall q1 q2, q1 == q2 -> Qeqb q1 q2 = true.
+Proof.
+  intros q1 q2 Heq. unfold Qeqb.
+  destruct (Qcompare_spec q1 q2) as [Heq'|Hlt|Hgt]; try reflexivity.
+  - exfalso. apply (Qlt_not_eq _ _ Hlt). exact Heq.
+  - exfalso. apply (Qlt_not_eq _ _ Hgt). symmetry. exact Heq.
+Qed.
+
+Lemma value_eqb_null_true : forall v, value_eqb JNull v = true -> v = JNull.
+Proof.
+  intros v H. destruct v; simpl in H; try discriminate H. reflexivity.
+Qed.
+
+Lemma value_eqb_bool_true : forall b v, value_eqb (JBool b) v = true -> v = JBool b.
+Proof.
+  intros b v H. destruct v; simpl in H; try discriminate H.
+  apply Bool.eqb_prop in H. subst. reflexivity.
+Qed.
+
+Lemma value_eqb_str_true : forall s v, value_eqb (JStr s) v = true -> v = JStr s.
+Proof.
+  intros s v H. destruct v; simpl in H; try discriminate H.
+  apply string_eqb_true_iff in H. subst. reflexivity.
+Qed.
+
+Lemma value_eqb_num_eq : forall q1 q2, value_eqb (JNum q1) (JNum q2) = true -> q1 == q2.
+Proof.
+  intros q1 q2 H. simpl in H. apply Qeqb_eq. exact H.
+Qed.
+
+Lemma value_list_eqb_refl : forall xs,
+  (forall x, List.In x xs -> value_eqb x x = true) ->
+  (fix arr_eqb (l1 l2: list JSON.value) {struct l1} :=
+    match l1, l2 with
+    | [], [] => true
+    | v1'::t1, v2'::t2 => andb (value_eqb v1' v2') (arr_eqb t1 t2)
+    | _, _ => false
+    end) xs xs = true.
+Proof.
+  intros xs IH. induction xs as [|x xs' IHinner]; simpl; try reflexivity.
+  rewrite IH by (left; reflexivity).
+  rewrite IHinner. reflexivity.
+  intros y Hy. apply IH. right. exact Hy.
+Qed.
+
+Lemma field_list_eqb_refl : forall fs,
+  (forall p, List.In p fs -> value_eqb (snd p) (snd p) = true) ->
+  (fix fields_eqb (l1 l2: list (string * JSON.value)) {struct l1} :=
+    match l1, l2 with
+    | [], [] => true
+    | (k1,v1')::t1, (k2,v2')::t2 =>
+        andb (string_eqb k1 k2) (andb (value_eqb v1' v2') (fields_eqb t1 t2))
+    | _, _ => false
+    end) fs fs = true.
+Proof.
+  intros fs IH. induction fs as [|[k v] fs' IHinner]; simpl; try reflexivity.
+  assert (Hk: string_eqb k k = true).
+  { rewrite string_eqb_true_iff. reflexivity. }
+  assert (Hv: value_eqb v v = true).
+  { specialize (IH (k, v)). simpl in IH. apply IH. left. reflexivity. }
+  rewrite Hk, Hv. simpl.
+  rewrite IHinner. reflexivity.
+  intros [k' v'] Hp. apply IH. right. exact Hp.
+Qed.
+
+Lemma string_eqb_refl : forall s, string_eqb s s = true.
+Proof.
+  intro s. rewrite string_eqb_true_iff. reflexivity.
+Qed.
+
+Fixpoint value_size (v:JSON.value) : nat :=
+  match v with
+  | JNull => 1
+  | JBool _ => 1
+  | JNum _ => 1
+  | JStr _ => 1
+  | JArr xs =>
+      S ((fix list_size (l:list JSON.value) : nat :=
+        match l with
+        | [] => O
+        | x :: xs' => (value_size x + list_size xs')%nat
+        end) xs)
+  | JObject fs =>
+      S ((fix fields_size (l:list (string * JSON.value)) : nat :=
+        match l with
+        | [] => O
+        | (_, v') :: fs' => (value_size v' + fields_size fs')%nat
+        end) fs)
+  end.
+
+Lemma value_size_pos : forall v, (value_size v > O)%nat.
+Proof.
+  intro v. destruct v; simpl; lia.
+Qed.
+
+Lemma value_size_in_list : forall x xs, List.In x xs -> (value_size x < value_size (JArr xs))%nat.
+Proof.
+  intros x xs Hin. simpl. induction xs as [|y ys IH]; simpl in *.
+  - contradiction.
+  - destruct Hin as [Heq|Hin].
+    + subst. pose proof (value_size_pos x). lia.
+    + specialize (IH Hin). lia.
+Qed.
+
+Lemma value_size_in_fields : forall k v fs, List.In (k, v) fs -> (value_size v < value_size (JObject fs))%nat.
+Proof.
+  intros k v fs Hin. simpl. induction fs as [|[k' v'] fs' IH]; simpl in *.
+  - contradiction.
+  - destruct Hin as [Heq|Hin].
+    + inversion Heq; subst. pose proof (value_size_pos v). lia.
+    + specialize (IH Hin). lia.
+Qed.
+
+Lemma value_eqb_refl : forall v, value_eqb v v = true.
+Proof.
+  intro v. remember (value_size v) as n eqn:Hn.
+  revert v Hn. induction n as [n IH] using (well_founded_induction lt_wf).
+  intros v Hn. destruct v.
+  - reflexivity.
+  - simpl. apply Bool.eqb_reflx.
+  - simpl. apply Qeq_eqb. apply Qeq_refl.
+  - simpl. apply string_eqb_refl.
+  - simpl. apply value_list_eqb_refl. intros x Hx.
+    eapply IH.
+    + rewrite Hn. apply value_size_in_list. exact Hx.
+    + reflexivity.
+  - simpl. apply field_list_eqb_refl. intros p Hp. destruct p as [k v']. simpl.
+    eapply IH with (v := v').
+    + rewrite Hn. eapply value_size_in_fields. exact Hp.
+    + reflexivity.
+Qed.
+
+Theorem value_eqb_reflects_eq : forall v1 v2, v1 = v2 -> value_eqb v1 v2 = true.
+Proof.
+  intros v1 v2 H. subst v2. apply value_eqb_refl.
+Qed.
+
+
 Fixpoint countBy {A} (eqb:A->A->bool) (x:A) (xs:list A) : nat :=
   match xs with
   | [] => 0
