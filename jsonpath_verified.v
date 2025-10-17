@@ -2355,6 +2355,96 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
+(* Universal Normalization Theorem                              *)
+(* ------------------------------------------------------------ *)
+
+(** Lemma: Appending a name step preserves normalization. *)
+Lemma path_normalized_app_name :
+  forall (pth : list JSON.step) (s : string),
+    forallb step_normalized pth = true ->
+    forallb step_normalized (pth ++ [JSON.SName s]) = true.
+Proof.
+  intros pth s Hpth.
+  rewrite forallb_app. simpl. rewrite Hpth. reflexivity.
+Qed.
+
+(** Lemma: Appending a non-negative index step preserves normalization. *)
+Lemma path_normalized_app_index :
+  forall (pth : list JSON.step) (i : Z),
+    forallb step_normalized pth = true ->
+    (0 <=? i) = true ->
+    forallb step_normalized (pth ++ [JSON.SIndex i]) = true.
+Proof.
+  intros pth i Hpth Hi.
+  rewrite forallb_app. simpl. rewrite Hpth. simpl. rewrite Hi. reflexivity.
+Qed.
+
+(** Theorem: ALL selectors produce only normalized paths (universal normalization). *)
+Theorem all_selectors_produce_normalized_paths :
+  forall sel p v,
+    path_normalized p = true ->
+    Forall (fun '(p', _) => path_normalized p' = true)
+           (Exec.sel_exec_nf sel (p, v)).
+Proof.
+  intros sel p v Hp.
+  destruct sel as [sel_name | | sel_idx | sel_start sel_end sel_step | sel_filter];
+  destruct v as [|vb|vn|vs|varr|vobj]; simpl; try constructor.
+
+  - destruct (find (fun kv => string_eqb (fst kv) sel_name) vobj) as [[k v']|] eqn:Hfind.
+    + constructor; [|constructor]. unfold path_normalized. apply path_normalized_app_name. exact Hp.
+    + constructor.
+
+  - apply Forall_forall. intros [p' v'] Hin.
+    apply in_map_iff in Hin. destruct Hin as [[i v0] [Heq _]].
+    inversion Heq; subst. unfold path_normalized. apply path_normalized_app_index.
+    + exact Hp.
+    + apply Z.leb_le. apply Nat2Z.is_nonneg.
+
+  - apply Forall_forall. intros [p' v'] Hin.
+    apply in_map_iff in Hin. destruct Hin as [[k v0] [Heq _]].
+    inversion Heq; subst. unfold path_normalized. apply path_normalized_app_name. exact Hp.
+
+  - set (idx := if sel_idx <? 0 then Z.of_nat (List.length varr) + sel_idx else sel_idx).
+    destruct ((idx <? 0) || (idx >=? Z.of_nat (List.length varr))) eqn:Hbounds; [constructor|].
+    destruct (nth_error varr (Z.to_nat idx)) eqn:Hnth; [|constructor].
+    constructor; [|constructor]. unfold path_normalized. apply path_normalized_app_index.
+    + exact Hp.
+    + apply Z.leb_le. apply Z.ltb_ge. apply orb_false_iff in Hbounds.
+      destruct Hbounds. exact H.
+
+  - apply Forall_forall. intros [p' v'] Hin.
+    apply in_map_iff in Hin. destruct Hin as [n [Heq _]].
+    inversion Heq; subst. unfold path_normalized. apply path_normalized_app_index.
+    + exact Hp.
+    + apply Z.leb_le. apply Nat2Z.is_nonneg.
+Qed.
+
+(** Corollary: Starting from empty path, all selector results are normalized. *)
+Corollary selector_results_normalized_from_root :
+  forall sel v,
+    Forall (fun '(p, _) => path_normalized p = true)
+           (Exec.sel_exec_nf sel ([], v)).
+Proof.
+  intros. apply all_selectors_produce_normalized_paths. reflexivity.
+Qed.
+
+(** Corollary: Child segment results are normalized. *)
+Corollary child_segment_normalized :
+  forall sels p v,
+    path_normalized p = true ->
+    Forall (fun '(p', _) => path_normalized p' = true)
+           (Exec.child_on_node_nf sels (p, v)).
+Proof.
+  intros sels p v Hp.
+  unfold Exec.child_on_node_nf, Exec.child_on_node_impl.
+  induction sels as [|sel sels' IH]; simpl.
+  - constructor.
+  - rewrite Forall_app. split.
+    + apply all_selectors_produce_normalized_paths. exact Hp.
+    + exact IH.
+Qed.
+
+(* ------------------------------------------------------------ *)
 (* Out-of-bounds contradiction lemma                             *)
 (* ------------------------------------------------------------ *)
 
