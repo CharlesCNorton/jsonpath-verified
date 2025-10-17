@@ -2358,6 +2358,32 @@ Qed.
 (* Universal Normalization Theorem                              *)
 (* ------------------------------------------------------------ *)
 
+(** Custom induction principle for values with Forall hypotheses. *)
+Lemma Forall_value_ind :
+  forall (P : value -> Prop),
+    (forall b, P (JBool b)) ->
+    (forall n, P (JNum n)) ->
+    (forall s, P (JStr s)) ->
+    P JNull ->
+    (forall xs, Forall P xs -> P (JArr xs)) ->
+    (forall fields, Forall (fun '(k,v) => P v) fields -> P (JObject fields)) ->
+    forall v, P v.
+Proof.
+  intros P HBool HNum HStr HNull HArr HObj.
+  fix IH 1.
+  intros [| b | n | s | xs | fields].
+  - exact HNull.
+  - apply HBool.
+  - apply HNum.
+  - apply HStr.
+  - apply HArr. induction xs as [| x xs' IHxs]; constructor.
+    + apply IH.
+    + apply IHxs.
+  - apply HObj. induction fields as [| [k v] fields' IHfs]; constructor.
+    + apply IH.
+    + apply IHfs.
+Qed.
+
 (** Lemma: Appending a name step preserves normalization. *)
 Lemma path_normalized_app_name :
   forall (pth : list JSON.step) (s : string),
@@ -2442,6 +2468,151 @@ Proof.
   - rewrite Forall_app. split.
     + apply all_selectors_produce_normalized_paths. exact Hp.
     + exact IH.
+Qed.
+
+(** Helper lemma for array case of visit_df_value_normalized. *)
+Lemma visit_df_arr_aux_normalized :
+  forall xs p start,
+    Forall (fun v => forall p', path_normalized p' = true ->
+                      Forall (fun '(p'', _) => path_normalized p'' = true)
+                             (Exec.visit_df_value p' v)) xs ->
+    path_normalized p = true ->
+    Forall (Forall (fun '(p', _) => path_normalized p' = true))
+      ((fix go (i:nat) (ys:list JSON.value) {struct ys} : list (list JSON.node) :=
+        match ys with
+        | [] => []
+        | v'::ys' => Exec.visit_df_value (List.app p [SIndex (Z.of_nat i)]) v' :: go (S i) ys'
+        end) start xs).
+Proof.
+  intros xs p start Hall Hp.
+  revert start.
+  induction Hall as [|x xs' Hx Hall' IH]; intro start; simpl.
+  - constructor.
+  - constructor.
+    + apply Hx. unfold path_normalized.
+      apply path_normalized_app_index. exact Hp.
+      apply Z.leb_le. apply Nat2Z.is_nonneg.
+    + apply IH.
+Qed.
+
+(** Helper lemma for object case of visit_df_value_normalized. *)
+Lemma visit_df_obj_aux_normalized :
+  forall fs p,
+    Forall (fun '(k,v) => forall p', path_normalized p' = true ->
+                           Forall (fun '(p'', _) => path_normalized p'' = true)
+                                  (Exec.visit_df_value p' v)) fs ->
+    path_normalized p = true ->
+    Forall (Forall (fun '(p', _) => path_normalized p' = true))
+      ((fix go (gs:list (string*JSON.value)) {struct gs} : list (list JSON.node) :=
+        match gs with
+        | [] => []
+        | (k,v')::gs' => Exec.visit_df_value (List.app p [SName k]) v' :: go gs'
+        end) fs).
+Proof.
+  intros fs p Hall Hp.
+  induction Hall as [|[k v'] fs' Hv Hall' IH]; simpl.
+  - constructor.
+  - constructor.
+    + apply Hv. unfold path_normalized.
+      apply path_normalized_app_name. exact Hp.
+    + apply IH.
+Qed.
+
+(** Lemma: visit_df_value produces normalized paths from normalized input. *)
+Lemma visit_df_value_normalized :
+  forall v p,
+    path_normalized p = true ->
+    Forall (fun '(p', _) => path_normalized p' = true)
+           (Exec.visit_df_value p v).
+Proof.
+  apply (Forall_value_ind
+    (fun v => forall p,
+              path_normalized p = true ->
+              Forall (fun '(p', _) => path_normalized p' = true)
+                     (Exec.visit_df_value p v))).
+  - intros b p Hp. simpl. constructor; [exact Hp | constructor].
+  - intros n p Hp. simpl. constructor; [exact Hp | constructor].
+  - intros s p Hp. simpl. constructor; [exact Hp | constructor].
+  - intros p Hp. simpl. constructor; [exact Hp | constructor].
+  - intros xs IHxs p Hp. simpl. constructor; [exact Hp |].
+    apply Forall_concat.
+    apply visit_df_arr_aux_normalized; assumption.
+  - intros fields IHfields p Hp. simpl. constructor; [exact Hp |].
+    apply Forall_concat.
+    apply visit_df_obj_aux_normalized; assumption.
+Qed.
+
+(** Corollary: Descendant segment results are normalized. *)
+Corollary desc_segment_normalized :
+  forall sels p v,
+    path_normalized p = true ->
+    Forall (fun '(p', _) => path_normalized p' = true)
+           (List.concat (map (Exec.child_on_node_impl Exec.sel_exec_nf sels)
+                            (Exec.visit_df_node (p, v)))).
+Proof.
+  intros sels p v Hp.
+  apply Forall_concat.
+  apply Forall_map.
+  unfold Exec.visit_df_node.
+  apply Forall_forall.
+  intros [p' v'] Hin.
+  pose proof (visit_df_value_normalized v p Hp) as Hvisit.
+  apply Forall_forall with (x := (p', v')) in Hvisit; [|exact Hin].
+  apply child_segment_normalized. exact Hvisit.
+Qed.
+
+(** Theorem: Single segment evaluation preserves path normalization. *)
+Theorem segment_preserves_normalization :
+  forall seg p v,
+    path_normalized p = true ->
+    Forall (fun '(p', _) => path_normalized p' = true)
+           (Exec.seg_exec_impl Exec.sel_exec_nf seg (p, v)).
+Proof.
+  intros seg p v Hp.
+  destruct seg as [sels | sels].
+  - simpl. unfold Exec.child_on_node_nf.
+    apply child_segment_normalized. exact Hp.
+  - simpl. apply desc_segment_normalized. exact Hp.
+Qed.
+
+(** Lemma: Chaining segments preserves normalization. *)
+Lemma segment_chain_preserves_normalization :
+  forall segs ns,
+    Forall (fun '(p, _) => path_normalized p = true) ns ->
+    Forall (fun '(p, _) => path_normalized p = true)
+           (Exec.segs_exec_impl Exec.sel_exec_nf segs ns).
+Proof.
+  intros segs ns.
+  revert ns.
+  induction segs as [|seg segs' IH]; intros ns Hns; simpl.
+  - exact Hns.
+  - apply IH. apply Forall_concat. apply Forall_map.
+    apply Forall_forall. intros [p v] Hin.
+    apply Forall_forall with (x := (p, v)) in Hns; [|exact Hin].
+    apply segment_preserves_normalization. exact Hns.
+Qed.
+
+(** Theorem: Full query evaluation produces only normalized paths (filter-free version). *)
+Theorem query_produces_normalized_paths :
+  forall q J,
+    Forall (fun '(p, _) => path_normalized p = true)
+           (Exec.eval_exec_impl Exec.sel_exec_nf q J).
+Proof.
+  intros [segs] J.
+  unfold Exec.eval_exec_impl.
+  apply segment_chain_preserves_normalization.
+  constructor; [reflexivity | constructor].
+Qed.
+
+(** Corollary: eval_exec_nf always produces normalized paths. *)
+Corollary eval_exec_nf_normalized :
+  forall q J,
+    Forall (fun '(p, _) => path_normalized p = true)
+           (Exec.eval_exec_nf q J).
+Proof.
+  intros q J.
+  unfold Exec.eval_exec_nf.
+  apply query_produces_normalized_paths.
 Qed.
 
 (* ------------------------------------------------------------ *)
@@ -3322,31 +3493,6 @@ Proof.
 Qed.
 
 End JSONPath_Equiv.
-
-Lemma Forall_value_ind :
-  forall (P : value -> Prop),
-    (forall b, P (JBool b)) ->
-    (forall n, P (JNum n)) ->
-    (forall s, P (JStr s)) ->
-    P JNull ->
-    (forall xs, Forall P xs -> P (JArr xs)) ->
-    (forall fields, Forall (fun '(k,v) => P v) fields -> P (JObject fields)) ->
-    forall v, P v.
-Proof.
-  intros P HBool HNum HStr HNull HArr HObj.
-  fix IH 1.
-  intros [| b | n | s | xs | fields].
-  - exact HNull.
-  - apply HBool.
-  - apply HNum.
-  - apply HStr.
-  - apply HArr. induction xs as [| x xs' IHxs]; constructor.
-    + apply IH.
-    + apply IHxs.
-  - apply HObj. induction fields as [| [k v] fields' IHfs]; constructor.
-    + apply IH.
-    + apply IHfs.
-Qed.
 
 Lemma visit_df_arr_go_forall2 :
   forall xs p start,
