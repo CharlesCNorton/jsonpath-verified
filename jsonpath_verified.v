@@ -1357,17 +1357,8 @@ Definition aety (a:aexpr) : primty :=
   | AValue _         => TAnyPrim
   end.
 
-(** Type compatibility for comparisons. *)
-Definition comparable (t1 t2:primty) : bool :=
-  match t1, t2 with
-  | TNull, TNull => true
-  | TBool, TBool => true
-  | TNum , TNum  => true
-  | TStr , TStr  => true
-  | TAnyPrim, _  => true
-  | _ , TAnyPrim => true
-  | _ , _        => false
-  end.
+(** Type compatibility for comparisons (relaxed: all primitives comparable). *)
+Definition comparable (t1 t2:primty) : bool := true.
 
 (** Well-formedness check for filter expressions (conservative). *)
 Fixpoint wf_fexpr (f:fexpr) : bool :=
@@ -1570,9 +1561,7 @@ Lemma comparable_types_defined :
     exists result : bool, cmp_prim op p1 p2 = result.
 Proof.
   intros t1 t2 p1 p2 op Hcomp Ht1 Ht2.
-  destruct t1, t2; simpl in Hcomp; try discriminate;
-  destruct p1, p2; simpl in Ht1, Ht2; try contradiction;
-  eexists; reflexivity.
+  destruct p1, p2, op; eexists; reflexivity.
 Qed.
 
 (** Well-formed comparison operations have compatible operand types. *)
@@ -2113,6 +2102,71 @@ Example exec_slice_mixed_bounds :
   = [ ([SIndex 2], JQ 2) ; ([SIndex 3], JQ 3) ; ([SIndex 4], JQ 4) ].
 Proof. reflexivity. Qed.
 
+(** Slice on empty array yields empty result. *)
+Example exec_slice_empty_array :
+  let j := JArr [] in
+  eval_exec (Query [Child [SelSlice None None 1]]) j = [].
+Proof. reflexivity. Qed.
+
+(** Slice on single element array. *)
+Example exec_slice_single_element :
+  let j := JArr [JQ 42] in
+  eval_exec (Query [Child [SelSlice None None 1]]) j
+  = [ ([SIndex 0], JQ 42) ].
+Proof. reflexivity. Qed.
+
+(** Slice with start > end and positive step yields empty result. *)
+Example exec_slice_start_gt_end_pos_step :
+  let j := JArr [JQ 0; JQ 1; JQ 2; JQ 3] in
+  eval_exec (Query [Child [SelSlice (Some 3) (Some 1) 1]]) j = [].
+Proof. reflexivity. Qed.
+
+(** Slice with start < end and negative step yields empty result. *)
+Example exec_slice_start_lt_end_neg_step :
+  let j := JArr [JQ 0; JQ 1; JQ 2; JQ 3] in
+  eval_exec (Query [Child [SelSlice (Some 1) (Some 3) (-1)]]) j = [].
+Proof. reflexivity. Qed.
+
+(** Slice with step larger than array length selects only first element. *)
+Example exec_slice_large_step :
+  let j := JArr [JQ 0; JQ 1; JQ 2; JQ 3] in
+  eval_exec (Query [Child [SelSlice None None 10]]) j
+  = [ ([SIndex 0], JQ 0) ].
+Proof. reflexivity. Qed.
+
+(** Slice with large negative indices beyond array bounds yields empty. *)
+Example exec_slice_large_negative_indices :
+  let j := JArr [JQ 0; JQ 1; JQ 2] in
+  eval_exec (Query [Child [SelSlice (Some (-10)) (Some (-8)) 1]]) j = [].
+Proof. reflexivity. Qed.
+
+(** Slice with out of bounds positive indices yields empty. *)
+Example exec_slice_oob_positive_indices :
+  let j := JArr [JQ 0; JQ 1; JQ 2] in
+  eval_exec (Query [Child [SelSlice (Some 10) (Some 20) 1]]) j = [].
+Proof. reflexivity. Qed.
+
+(** Slice with None/None/1 selects full array. *)
+Example exec_slice_full_array :
+  let j := JArr [JQ 0; JQ 1; JQ 2] in
+  eval_exec (Query [Child [SelSlice None None 1]]) j
+  = [ ([SIndex 0], JQ 0) ; ([SIndex 1], JQ 1) ; ([SIndex 2], JQ 2) ].
+Proof. reflexivity. Qed.
+
+(** Slice with -1 as start and None end selects last element. *)
+Example exec_slice_last_element :
+  let j := JArr [JQ 0; JQ 1; JQ 2] in
+  eval_exec (Query [Child [SelSlice (Some (-1)) None 1]]) j
+  = [ ([SIndex 2], JQ 2) ].
+Proof. reflexivity. Qed.
+
+(** Slice from start to -1 (exclusive) selects all but last. *)
+Example exec_slice_all_but_last :
+  let j := JArr [JQ 0; JQ 1; JQ 2] in
+  eval_exec (Query [Child [SelSlice None (Some (-1)) 1]]) j
+  = [ ([SIndex 0], JQ 0) ; ([SIndex 1], JQ 1) ].
+Proof. reflexivity. Qed.
+
 (** Filter comparing nested field value against threshold. *)
 Definition f_age_gt_21 : selector :=
   SelFilter (FCmp CGt
@@ -2189,6 +2243,34 @@ Example exec_filter_length_gt_3_on_array_of_strings :
       ([SIndex 1], JStr "abcd");
       ([SIndex 3], JStr "hello")
     ].
+Proof. reflexivity. Qed.
+
+(** Cross-type comparison: number vs string (previously rejected, now allowed). *)
+Definition f_num_vs_str : selector :=
+  SelFilter (FCmp CEq (APrim (PNum (Q_of_Z 42))) (APrim (PStr "hello"))).
+
+Example exec_filter_num_vs_str_rejects_all :
+  let j := JArr [JQ 0; JQ 42; JStr "hello"] in
+  eval_exec (Query [Child [f_num_vs_str]]) j = [].
+Proof. reflexivity. Qed.
+
+(** Cross-type comparison: null vs boolean. *)
+Definition f_null_vs_bool : selector :=
+  SelFilter (FCmp CNe (AValue (Query [Child [SelName "x"]])) (APrim (PBool true))).
+
+Example exec_filter_null_vs_bool :
+  let j := JArr [JObject [("x", JNull)]; JObject [("x", JBool true)]; JObject []] in
+  eval_exec (Query [Child [f_null_vs_bool]]) j
+  = [ ([SIndex 0], JObject [("x", JNull)]) ].
+Proof. reflexivity. Qed.
+
+(** Cross-type ordering: string vs number returns false. *)
+Definition f_str_lt_num : selector :=
+  SelFilter (FCmp CLt (APrim (PStr "abc")) (APrim (PNum (Q_of_Z 10)))).
+
+Example exec_filter_str_lt_num_rejects_all :
+  let j := JArr [JQ 0; JStr "test"] in
+  eval_exec (Query [Child [f_str_lt_num]]) j = [].
 Proof. reflexivity. Qed.
 
 (** Descendant segment searches all depths, collecting matching nodes. *)
