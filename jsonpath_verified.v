@@ -416,6 +416,55 @@ Proof.
   inversion Hnorm; subst; split; apply clamp_bounds; lia.
 Qed.
 
+(** Helper: fold_right filter preserves property of accumulated elements. *)
+Lemma fold_right_filter_in :
+  forall (zs : list Z) (lz : Z) (n : nat),
+    In n (fold_right
+            (fun z acc =>
+               if (0 <=? z) && (z <? lz) then Z.to_nat z :: acc else acc)
+            [] zs) ->
+    exists z, In z zs /\ (0 <=? z) = true /\ (z <? lz) = true /\ Z.to_nat z = n.
+Proof.
+  intros zs lz n.
+  induction zs as [|z zs' IH]; intro Hin.
+  - inversion Hin.
+  - simpl in Hin.
+    destruct ((0 <=? z) && (z <? lz)) eqn:Hcond.
+    + destruct Hin as [Heq | Hin'].
+      * exists z. split; [left; reflexivity|].
+        apply andb_prop in Hcond. destruct Hcond as [Hge Hlt].
+        split; [exact Hge|]. split; [exact Hlt|]. exact Heq.
+      * destruct (IH Hin') as [z' [Hin'' [Hge [Hlt Heq]]]].
+        exists z'. split; [right; exact Hin''|].
+        split; [exact Hge|]. split; [exact Hlt|]. exact Heq.
+    + destruct (IH Hin) as [z' [Hin'' [Hge [Hlt Heq]]]].
+      exists z'. split; [right; exact Hin''|].
+      split; [exact Hge|]. split; [exact Hlt|]. exact Heq.
+Qed.
+
+(** All positions returned by slice_positions are within valid bounds. *)
+Theorem slice_positions_all_in_bounds :
+  forall len start endo stp (n : nat),
+    In n (slice_positions len start endo stp) ->
+    (n < len)%nat.
+Proof.
+  intros len start endo stp n Hin.
+  unfold slice_positions in Hin.
+  destruct (normalize_slice_bounds len start endo stp) as [[s e] st] eqn:Hnorm.
+  destruct (Z.eqb st 0) eqn:Heq.
+  - inversion Hin.
+  - set (lz := Z.of_nat len) in *.
+    destruct (fold_right_filter_in _ lz n Hin) as [z [_ [Hge [Hlt Heq']]]].
+    apply Z.leb_le in Hge.
+    apply Z.ltb_lt in Hlt.
+    subst n.
+    apply Nat2Z.inj_lt.
+    rewrite Z2Nat.id by lia.
+    exact Hlt.
+Qed.
+
+(** The length of slice_positions is bounded by the array length. *)
+
 (* ------------------------------------------------------------ *)
 (* Helper functions for relational semantics                    *)
 (* ------------------------------------------------------------ *)
