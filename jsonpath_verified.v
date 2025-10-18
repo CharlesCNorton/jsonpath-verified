@@ -2698,69 +2698,8 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
-(* Path normalization for full evaluator (with filters)         *)
+(* Out-of-bounds contradiction lemma                             *)
 (* ------------------------------------------------------------ *)
-
-(** Helper: filter preserves Forall property. *)
-Lemma filter_preserves_Forall {A} (P : A -> Prop) (f : A -> bool) (xs : list A) :
-  Forall P xs ->
-  Forall P (filter f xs).
-Proof.
-  intro H. induction H as [|x xs' Hx Hxs' IH]; simpl.
-  - constructor.
-  - destruct (f x) eqn:Hfx.
-    + constructor; assumption.
-    + exact IH.
-Qed.
-
-(** Helper: map preserves Forall when function preserves property. *)
-Lemma map_preserves_Forall {A B} (P : A -> Prop) (Q : B -> Prop) (f : A -> B) (xs : list A) :
-  (forall x, P x -> Q (f x)) ->
-  Forall P xs ->
-  Forall Q (map f xs).
-Proof.
-  intros Hpres H. induction H as [|x xs' Hx Hxs' IH]; simpl.
-  - constructor.
-  - constructor.
-    + apply Hpres. exact Hx.
-    + exact IH.
-Qed.
-
-(* ------------------------------------------------------------ *)
-
-(** Theorem: Full selector (with filters) produces only normalized paths. *)
-Theorem all_selectors_with_filters_produce_normalized_paths :
-  forall sel p v,
-    path_normalized p = true ->
-    Forall (fun '(p', _) => path_normalized p' = true)
-           (Exec.sel_exec sel (p, v)).
-Proof.
-  intros sel p v Hp.
-  destruct sel as [s | | idx | start stop step | f]; destruct v as [|b|n|str|arr|obj]; simpl; try constructor.
-  - destruct (find (fun kv => string_eqb (fst kv) s) obj) as [[k val]|]; [|constructor].
-    constructor; [|constructor]. apply path_normalized_app_name; exact Hp.
-  - apply (map_preserves_Forall (fun _ => True) (fun '(p', _) => path_normalized p' = true)).
-    + intros [i v'] _. apply path_normalized_app_index; [exact Hp | apply Z.leb_le, Nat2Z.is_nonneg].
-    + clear. induction (index_zip arr); constructor; auto.
-  - apply (map_preserves_Forall (fun _ => True) (fun '(p', _) => path_normalized p' = true)).
-    + intros [k v'] _. apply path_normalized_app_name; exact Hp.
-    + clear. induction obj; constructor; auto.
-  - set (i := if idx <? 0 then Z.of_nat (List.length arr) + idx else idx).
-    destruct ((i <? 0) || (i >=? Z.of_nat (List.length arr))) eqn:H; [constructor|].
-    destruct (nth_error arr (Z.to_nat i)); [|constructor].
-    constructor; [|constructor]. apply path_normalized_app_index; [exact Hp|].
-    apply Z.leb_le, Z.ltb_ge. apply orb_false_iff in H. apply H.
-  - apply (map_preserves_Forall (fun _ => True) (fun '(p', _) => path_normalized p' = true)).
-    + intros n _. apply path_normalized_app_index; [exact Hp | apply Z.leb_le, Nat2Z.is_nonneg].
-    + clear. induction (slice_positions (List.length arr) start stop step); constructor; auto.
-  - apply (map_preserves_Forall (fun _ => True) (fun '(p', _) => path_normalized p' = true)).
-    + intros [i v'] _. apply path_normalized_app_index; [exact Hp | apply Z.leb_le, Nat2Z.is_nonneg].
-    + apply filter_preserves_Forall. clear. induction (index_zip arr); constructor; auto.
-  - apply (map_preserves_Forall (fun _ => True) (fun '(p', _) => path_normalized p' = true)).
-    + intros [k v'] _. apply path_normalized_app_name; exact Hp.
-    + apply filter_preserves_Forall. clear. induction obj; constructor; auto.
-Qed.
-
 
 (** Contradiction: valid index cannot simultaneously satisfy bounds check failure. *)
 Lemma eval_selector_index_success_out_of_bounds_contradiction :
@@ -3896,82 +3835,6 @@ Proof.
       * simpl. apply Permutation_app_head. exact IHfs.
 Qed.
 
-Lemma in_combine_snd :
-  forall {A B} (xs : list A) (ys : list B) a b,
-    In (a, b) (combine xs ys) -> In b ys.
-Proof.
-  intros A B xs ys a b Hin.
-  revert ys a b Hin.
-  induction xs as [|x xs' IH]; intros ys a b Hin; simpl in *.
-  - contradiction.
-  - destruct ys as [|y ys']; simpl in Hin.
-    + contradiction.
-    + destruct Hin as [Heq | Hin].
-      * inversion Heq. left. reflexivity.
-      * right. eapply IH. exact Hin.
-Qed.
-
-Lemma in_index_zip_snd :
-  forall {A} (xs : list A) i v,
-    In (i, v) (index_zip xs) -> In v xs.
-Proof.
-  intros A xs i v Hin.
-  unfold index_zip in Hin.
-  eapply in_combine_snd. exact Hin.
-Qed.
-
-Lemma in_map_index_zip_node_snd :
-  forall (xs : list value) p child,
-    In child (map (fun '(i, v) => (List.app p [SIndex (Z.of_nat i)], v)) (index_zip xs)) ->
-    In (snd child) xs.
-Proof.
-  intros xs p child Hin.
-  apply in_map_iff in Hin as [[i v] [Heq Hin]].
-  destruct child as [p' v']. simpl in Heq. simpl.
-  inversion Heq. subst v'. eapply in_index_zip_snd. exact Hin.
-Qed.
-
-Lemma visit_df_value_complete :
-  forall v p visited,
-    visit_order (p, v) visited ->
-    Permutation visited (visit_df_value p v).
-Proof.
-  apply (Forall_value_ind
-    (fun v => forall p visited, visit_order (p, v) visited -> Permutation visited (visit_df_value p v))).
-  - intros b p visited Hvisit. inversion Hvisit; subst; simpl; apply Permutation_refl.
-  - intros num p visited Hvisit. inversion Hvisit; subst; simpl; apply Permutation_refl.
-  - intros s p visited Hvisit. inversion Hvisit; subst; simpl; apply Permutation_refl.
-  - intros p visited Hvisit. inversion Hvisit; subst; simpl; apply Permutation_refl.
-  - intros xs IHxs p visited Hvisit.
-    inversion Hvisit as [? ? Hnotarr Hnotobj | p0 xs0 children children_lists nodes0 Hchildren HF2 Hvisited | ? ? ? ? ? ? ?]; clear Hvisit.
-    + exfalso. apply (Hnotarr xs). reflexivity.
-    + subst p0 xs0 visited nodes0. simpl. apply perm_skip.
-      revert xs IHxs Hchildren.
-      induction HF2 as [| child lst children' children_lists' Hvo HF2' IH_F2]; intros xs IHxs Hchildren.
-      * subst children. destruct xs; simpl; apply Permutation_refl.
-      * subst children. destruct xs as [|x xs']; simpl in *; unfold index_zip in *; simpl in *.
-        -- discriminate.
-        -- injection Hchildren as Hchild Hchildren'. subst child.
-           apply Permutation_app.
-           ++ simpl in Hvo. apply Forall_inv in IHxs. apply IHxs. exact Hvo.
-           ++ apply (IH_F2 xs'); [apply Forall_inv_tail in IHxs; exact IHxs | exact Hchildren'].
-    + discriminate.
-  - intros fs IHfs p visited Hvisit. inversion Hvisit; subst; simpl.
-    + exfalso. apply (H3 fs). reflexivity.
-    + apply perm_skip.
-      eapply visit_order_complete_object_helper; eauto.
-      intros [p' v'] lst Hvo. apply IHfs. exact Hvo.
-Qed.
-
-Lemma visit_df_node_complete :
-  forall n visited,
-    visit_order n visited ->
-    Permutation visited (visit_df_node n).
-Proof.
-  intros [p v] visited Hvisit.
-  unfold visit_df_node.
-  apply visit_df_value_complete. exact Hvisit.
-Qed.
 
 Import JSON JSONPath Exec JSONPath_Equiv.
 
