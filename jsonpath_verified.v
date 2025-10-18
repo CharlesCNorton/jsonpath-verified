@@ -218,7 +218,8 @@ Definition prim_of_value (v:value) : option prim :=
 (** Comparison operators for filter expressions. *)
 Inductive cmp := CEq | CNe | CLt | CLe | CGt | CGe.
 
-(** Regular expression AST for string pattern matching (Brzozowski derivatives). *)
+(** Regular expression AST for string pattern matching (Brzozowski derivatives).
+    Extended to support I-Regexp (RFC 9485) operators. *)
 Inductive regex :=
 | REmpty
 | REps
@@ -226,7 +227,11 @@ Inductive regex :=
 | RAny
 | RAlt (r1 r2:regex)
 | RCat (r1 r2:regex)
-| RStar (r:regex).
+| RStar (r:regex)
+| RPlus (r:regex)
+| ROpt (r:regex)
+| RRepeat (r:regex) (min max:nat)
+| RCharClass (neg:bool) (chars:list ascii).
 
 (** Arithmetic expressions: evaluate to primitives in filter contexts. *)
 Inductive aexpr :=
@@ -622,6 +627,17 @@ Fixpoint nullable (r:regex) : bool :=
   | RAlt r1 r2 => orb (nullable r1) (nullable r2)
   | RCat r1 r2 => andb (nullable r1) (nullable r2)
   | RStar _ => true
+  | RPlus r1 => nullable r1
+  | ROpt _ => true
+  | RRepeat r1 min _ => if Nat.eqb min 0 then true else nullable r1
+  | RCharClass _ _ => false
+  end.
+
+(** Helper: check if character is in list. *)
+Fixpoint char_in_list (c:ascii) (cs:list ascii) : bool :=
+  match cs with
+  | [] => false
+  | c'::cs' => if ascii_eqb c c' then true else char_in_list c cs'
   end.
 
 (** Brzozowski derivative: regex accepting suffixes after consuming character a. *)
@@ -637,6 +653,20 @@ Fixpoint deriv (a:ascii) (r:regex) : regex :=
       let d2 := deriv a r2 in
       if nullable r1 then RAlt (RCat d1 r2) d2 else RCat d1 r2
   | RStar r1 => RCat (deriv a r1) (RStar r1)
+  | RPlus r1 => RCat (deriv a r1) (RStar r1)
+  | ROpt r1 => deriv a r1
+  | RRepeat r1 min max =>
+      if Nat.eqb min 0
+      then if Nat.eqb max 0
+           then REmpty
+           else RAlt (RCat (deriv a r1) (RRepeat r1 0 (max - 1))) REmpty
+      else RCat (deriv a r1) (RRepeat r1 (min - 1) (max - 1))
+  | RCharClass neg cs =>
+      let matches := char_in_list a cs in
+      if negb neg then
+        if matches then REps else REmpty
+      else
+        if matches then REmpty else REps
   end.
 
 (** Simplify regex by removing identities and absorbing elements. *)
@@ -666,6 +696,22 @@ Fixpoint rsimpl (r:regex) : regex :=
       | REmpty | REps => REps
       | _ => RStar r1'
       end
+  | RPlus r1 =>
+      let r1' := rsimpl r1 in
+      match r1' with
+      | REmpty => REmpty
+      | _ => RPlus r1'
+      end
+  | ROpt r1 =>
+      let r1' := rsimpl r1 in
+      ROpt r1'
+  | RRepeat r1 min max =>
+      let r1' := rsimpl r1 in
+      if Nat.ltb max min then REmpty
+      else if Nat.eqb min 0 then
+        if Nat.eqb max 0 then REps
+        else RRepeat r1' min max
+      else RRepeat r1' min max
   | _ => r
   end.
 
@@ -982,6 +1028,17 @@ Fixpoint nullable (r:regex) : bool :=
   | RAlt r1 r2 => orb (nullable r1) (nullable r2)
   | RCat r1 r2 => andb (nullable r1) (nullable r2)
   | RStar _ => true
+  | RPlus r1 => nullable r1
+  | ROpt _ => true
+  | RRepeat r1 min _ => if Nat.eqb min 0 then true else nullable r1
+  | RCharClass _ _ => false
+  end.
+
+(** Helper: check if character is in list (module-scoped duplicate). *)
+Fixpoint char_in_list (c:ascii) (cs:list ascii) : bool :=
+  match cs with
+  | [] => false
+  | c'::cs' => if ascii_eqb c c' then true else char_in_list c cs'
   end.
 
 (** Brzozowski derivative (module-scoped duplicate). *)
@@ -997,6 +1054,20 @@ Fixpoint deriv (a:ascii) (r:regex) : regex :=
       let d2 := deriv a r2 in
       if nullable r1 then RAlt (RCat d1 r2) d2 else RCat d1 r2
   | RStar r1 => RCat (deriv a r1) (RStar r1)
+  | RPlus r1 => RCat (deriv a r1) (RStar r1)
+  | ROpt r1 => deriv a r1
+  | RRepeat r1 min max =>
+      if Nat.eqb min 0
+      then if Nat.eqb max 0
+           then REmpty
+           else RAlt (RCat (deriv a r1) (RRepeat r1 0 (max - 1))) REmpty
+      else RCat (deriv a r1) (RRepeat r1 (min - 1) (max - 1))
+  | RCharClass neg cs =>
+      let matches := char_in_list a cs in
+      if negb neg then
+        if matches then REps else REmpty
+      else
+        if matches then REmpty else REps
   end.
 
 (** Regex simplification (module-scoped duplicate). *)
@@ -1026,6 +1097,22 @@ Fixpoint rsimpl (r:regex) : regex :=
       | REmpty | REps => REps
       | _ => RStar r1'
       end
+  | RPlus r1 =>
+      let r1' := rsimpl r1 in
+      match r1' with
+      | REmpty => REmpty
+      | _ => RPlus r1'
+      end
+  | ROpt r1 =>
+      let r1' := rsimpl r1 in
+      ROpt r1'
+  | RRepeat r1 min max =>
+      let r1' := rsimpl r1 in
+      if Nat.ltb max min then REmpty
+      else if Nat.eqb min 0 then
+        if Nat.eqb max 0 then REps
+        else RRepeat r1' min max
+      else RRepeat r1' min max
   | _ => r
   end.
 
@@ -5484,6 +5571,10 @@ Fixpoint regex_size (r:JSONPath.regex) : nat :=
   | JSONPath.RStar r' => S (regex_size r')
   | JSONPath.RCat r1 r2 => S (regex_size r1 + regex_size r2)
   | JSONPath.RAlt r1 r2 => S (regex_size r1 + regex_size r2)
+  | JSONPath.RPlus r' => S (regex_size r')
+  | JSONPath.ROpt r' => S (regex_size r')
+  | JSONPath.RRepeat r' _ _ => S (regex_size r')
+  | JSONPath.RCharClass _ _ => 1
   end.
 
 Fixpoint selector_size (s:JSONPath.selector) : nat :=
