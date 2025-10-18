@@ -1,0 +1,15 @@
+# Coq compilation artifacts
+*.vo
+*.vok
+*.vos
+*.glob
+*.aux
+.*.aux
+.lia.cache
+
+# OCaml extraction artifacts
+*.ml
+*.mli
+
+# Keep only the source
+!jsonpath_verified.v
