@@ -1,7 +1,24 @@
-(**
-  JSONPath (RFC 9535): relational and executable semantics in Coq.
-  The development uses only the Coq standard library and supports OCaml extraction.
-*)
+(******************************************************************************)
+(*                                                                            *)
+(*                           JSONPATH VERIFIED                                *)
+(*                                                                            *)
+(*        A Complete Formalization of RFC 9535 in Coq                         *)
+(*                                                                            *)
+(*     Relational semantics, executable interpreter, and correctness          *)
+(*     proofs for the JSONPath query language over JSON documents.            *)
+(*     The development uses only the Coq standard library and supports        *)
+(*     OCaml extraction.                                                      *)
+(*                                                                            *)
+(*     "The name of the song is called 'Haddocks' Eyes.'"                     *)
+(*     "Oh, that's the name of the song, is it?" Alice said.                  *)
+(*     "No, you don't understand," the Knight said. "That's what the          *)
+(*      name is called. The name really is 'The Aged Aged Man.'"              *)
+(*                                              - Lewis Carroll, 1871         *)
+(*                                                                            *)
+(*     Author: Charles C. Norton                                              *)
+(*     Date: December 5, 2025                                                 *)
+(*                                                                            *)
+(******************************************************************************)
 
 From Coq Require Import Init.Prelude.
 From Coq Require Import
