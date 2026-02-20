@@ -1020,134 +1020,17 @@ with holds : fexpr -> JSON.node -> Prop :=
 (* Regex engine (ASCII)                                         *)
 (* ------------------------------------------------------------ *)
 
-(** Encapsulated regex module for extraction (duplicate definitions from helpers). *)
+(** Thin module wrapper for extraction: re-exports top-level regex functions. *)
 Module Regex.
-Import JSONPath.
-
-(** Nullability (module-scoped duplicate). *)
-Fixpoint nullable (r:regex) : bool :=
-  match r with
-  | REmpty => false
-  | REps => true
-  | RChr _ => false
-  | RAny => false
-  | RAlt r1 r2 => orb (nullable r1) (nullable r2)
-  | RCat r1 r2 => andb (nullable r1) (nullable r2)
-  | RStar _ => true
-  | RPlus r1 => nullable r1
-  | ROpt _ => true
-  | RRepeat r1 min _ => if Nat.eqb min 0 then true else nullable r1
-  | RCharClass _ _ => false
-  end.
-
-(** Helper: check if character is in list (module-scoped duplicate). *)
-Fixpoint char_in_list (c:ascii) (cs:list ascii) : bool :=
-  match cs with
-  | [] => false
-  | c'::cs' => if ascii_eqb c c' then true else char_in_list c cs'
-  end.
-
-(** Brzozowski derivative (module-scoped duplicate). *)
-Fixpoint deriv (a:ascii) (r:regex) : regex :=
-  match r with
-  | REmpty => REmpty
-  | REps => REmpty
-  | RChr c => if ascii_eqb a c then REps else REmpty
-  | RAny => REps
-  | RAlt r1 r2 => RAlt (deriv a r1) (deriv a r2)
-  | RCat r1 r2 =>
-      let d1 := deriv a r1 in
-      let d2 := deriv a r2 in
-      if nullable r1 then RAlt (RCat d1 r2) d2 else RCat d1 r2
-  | RStar r1 => RCat (deriv a r1) (RStar r1)
-  | RPlus r1 => RCat (deriv a r1) (RStar r1)
-  | ROpt r1 => deriv a r1
-  | RRepeat r1 min max =>
-      if Nat.eqb min 0
-      then if Nat.eqb max 0
-           then REmpty
-           else RAlt (RCat (deriv a r1) (RRepeat r1 0 (max - 1))) REmpty
-      else RCat (deriv a r1) (RRepeat r1 (min - 1) (max - 1))
-  | RCharClass neg cs =>
-      let matches := char_in_list a cs in
-      if negb neg then
-        if matches then REps else REmpty
-      else
-        if matches then REmpty else REps
-  end.
-
-(** Regex simplification (module-scoped duplicate). *)
-Fixpoint rsimpl (r:regex) : regex :=
-  match r with
-  | RAlt r1 r2 =>
-      let r1' := rsimpl r1 in
-      let r2' := rsimpl r2 in
-      match r1', r2' with
-      | REmpty, _ => r2'
-      | _, REmpty => r1'
-      | _, _      => RAlt r1' r2'
-      end
-  | RCat r1 r2 =>
-      let r1' := rsimpl r1 in
-      let r2' := rsimpl r2 in
-      match r1', r2' with
-      | REmpty, _ => REmpty
-      | _ , REmpty => REmpty
-      | REps , _ => r2'
-      | _ , REps => r1'
-      | _ , _    => RCat r1' r2'
-      end
-  | RStar r1 =>
-      let r1' := rsimpl r1 in
-      match r1' with
-      | REmpty | REps => REps
-      | _ => RStar r1'
-      end
-  | RPlus r1 =>
-      let r1' := rsimpl r1 in
-      match r1' with
-      | REmpty => REmpty
-      | _ => RPlus r1'
-      end
-  | ROpt r1 =>
-      let r1' := rsimpl r1 in
-      ROpt r1'
-  | RRepeat r1 min max =>
-      let r1' := rsimpl r1 in
-      if Nat.ltb max min then REmpty
-      else if Nat.eqb min 0 then
-        if Nat.eqb max 0 then REps
-        else RRepeat r1' min max
-      else RRepeat r1' min max
-  | _ => r
-  end.
-
-(** Simplified derivative (module-scoped duplicate). *)
-Definition deriv_simpl (a:ascii) (r:regex) : regex :=
-  rsimpl (deriv a r).
-
-(** String to character list (module-scoped duplicate). *)
-Fixpoint list_of_string (s:string) : list ascii :=
-  match s with
-  | EmptyString => []
-  | String a s' => a :: list_of_string s'
-  end.
-
-(** Incremental matching (module-scoped duplicate). *)
-Fixpoint matches_from (r:regex) (cs:list ascii) : bool :=
-  match cs with
-  | [] => nullable r
-  | a::cs' => matches_from (deriv_simpl a r) cs'
-  end.
-
-(** Full-string match (module-scoped duplicate). *)
-Definition regex_match (r:regex) (s:string) : bool :=
-  matches_from r (list_of_string s).
-
-(** Substring search (module-scoped duplicate). *)
-Definition regex_search (r:regex) (s:string) : bool :=
-  regex_match (RCat (RStar RAny) (RCat r (RStar RAny))) s.
-
+  Definition nullable := nullable.
+  Definition char_in_list := char_in_list.
+  Definition deriv := deriv.
+  Definition rsimpl := rsimpl.
+  Definition deriv_simpl := deriv_simpl.
+  Definition list_of_string := list_of_string.
+  Definition matches_from := matches_from.
+  Definition regex_match := regex_match.
+  Definition regex_search := regex_search.
 End Regex.
 
 (* ------------------------------------------------------------ *)
