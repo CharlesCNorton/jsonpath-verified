@@ -5749,75 +5749,6 @@ Qed.
 Section Totality.
   Import JSON JSONPath Exec.
 
-  Theorem sel_exec_total :
-    forall sel n,
-      exists res, sel_exec sel n = res.
-  Proof.
-    intros sel n.
-    exists (sel_exec sel n).
-    reflexivity.
-  Qed.
-
-  Theorem holds_b_total :
-    forall f n,
-      exists b, holds_b f n = b.
-  Proof.
-    intros f n.
-    exists (holds_b f n).
-    reflexivity.
-  Qed.
-
-  Theorem aeval_total :
-    forall a v,
-      exists res, aeval a v = res.
-  Proof.
-    intros a v.
-    exists (aeval a v).
-    reflexivity.
-  Qed.
-
-  Corollary eval_exec_total :
-    forall q J,
-      exists res, eval_exec q J = res.
-  Proof.
-    intros q J.
-    exists (eval_exec q J).
-    reflexivity.
-  Qed.
-
-  Theorem sel_exec_deterministic :
-    forall sel n res1 res2,
-      sel_exec sel n = res1 ->
-      sel_exec sel n = res2 ->
-      res1 = res2.
-  Proof.
-    intros sel n res1 res2 H1 H2.
-    rewrite <- H1, <- H2.
-    reflexivity.
-  Qed.
-
-  Theorem holds_b_deterministic :
-    forall f n b1 b2,
-      holds_b f n = b1 ->
-      holds_b f n = b2 ->
-      b1 = b2.
-  Proof.
-    intros f n b1 b2 H1 H2.
-    rewrite <- H1, <- H2.
-    reflexivity.
-  Qed.
-
-  Theorem aeval_deterministic :
-    forall a v res1 res2,
-      aeval a v = res1 ->
-      aeval a v = res2 ->
-      res1 = res2.
-  Proof.
-    intros a v res1 res2 H1 H2.
-    rewrite <- H1, <- H2.
-    reflexivity.
-  Qed.
-
   (**
     Termination argument: The mutual recursion terminates because:
     1. sel_exec is structurally recursive on selector
@@ -5870,41 +5801,6 @@ Section Totality.
     apply (IHn (aexpr_size a')).
     - rewrite Hn. exact Hlt.
     - reflexivity.
-  Qed.
-
-  (**
-    Corollary: The mutual recursion is guaranteed to terminate because
-    Coq's termination checker accepts the definitions and the size
-    measures strictly decrease on all recursive paths.
-  **)
-  Corollary sel_exec_terminates_proof :
-    forall sel n,
-      exists res, sel_exec sel n = res.
-  Proof.
-    intros sel.
-    pattern sel.
-    apply termination_by_selector_measure.
-    intros sel' IH n. apply sel_exec_total.
-  Qed.
-
-  Corollary holds_b_terminates_proof :
-    forall f n,
-      exists b, holds_b f n = b.
-  Proof.
-    intros f.
-    pattern f.
-    apply termination_by_fexpr_measure.
-    intros f' IH n. apply holds_b_total.
-  Qed.
-
-  Corollary aeval_terminates_proof :
-    forall a v,
-      exists res, aeval a v = res.
-  Proof.
-    intros a.
-    pattern a.
-    apply termination_by_aexpr_measure.
-    intros a' IH v. apply aeval_total.
   Qed.
 
 End Totality.
