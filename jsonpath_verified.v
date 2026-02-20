@@ -1158,35 +1158,6 @@ End Regex.
 Module Exec.
 Import JSON JSONPath Regex.
 
-(** Primitive equality (exec-scoped). *)
-Definition prim_eq (p q:prim) : bool :=
-  match p, q with
-  | PNull, PNull => true
-  | PBool b1, PBool b2 => Bool.eqb b1 b2
-  | PNum n1, PNum n2 => Qeqb n1 n2
-  | PStr s1, PStr s2 => string_eqb s1 s2
-  | _, _ => false
-  end.
-
-(** Primitive ordering (exec-scoped). *)
-Definition prim_lt (p q:prim) : bool :=
-  match p, q with
-  | PNum n1, PNum n2 => Qltb n1 n2
-  | PStr s1, PStr s2 => str_ltb s1 s2
-  | _ , _ => false
-  end.
-
-(** Comparison dispatch (exec-scoped). *)
-Definition cmp_prim (op:cmp) (x y:prim) : bool :=
-  match op with
-  | CEq => prim_eq x y
-  | CNe => negb (prim_eq x y)
-  | CLt => prim_lt x y
-  | CLe => orb (prim_lt x y) (prim_eq x y)
-  | CGt => prim_lt y x
-  | CGe => orb (prim_lt y x) (prim_eq x y)
-  end.
-
 (** Filter-free selector evaluator (no SelFilter support). *)
 Fixpoint sel_exec_nf (sel:selector) (n:JSON.node) : list JSON.node :=
   match n with
