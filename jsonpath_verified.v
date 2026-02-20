@@ -4217,11 +4217,8 @@ Proof.
   split; [exact Hseg | exact Hrest].
 Qed.
 
-Lemma is_prefix_of : forall {A} (p1 p2 : list A), Prop.
-Proof.
-  intros A p1 p2.
-  exact (exists suffix, p2 = List.app p1 suffix).
-Defined.
+Definition is_prefix_of {A} (p1 p2 : list A) : Prop :=
+  exists suffix, p2 = List.app p1 suffix.
 
 Corollary segment_prefix_paths_equal_when_suffix_empty :
   forall prefix J res_prefix res_full,
