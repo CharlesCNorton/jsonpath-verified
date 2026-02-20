@@ -1870,45 +1870,6 @@ Proof.
   destruct H as [->|[b [->|[n [->|[s ->]]]]]]; simpl; reflexivity.
 Qed.
 
-Lemma visit_arr_aux_det :
-  forall p xs i,
-    (fix go (i0:nat) (ys:list JSON.value) {struct ys} : list (list JSON.node) :=
-      match ys with
-      | [] => []
-      | v'::ys' => Exec.visit_df_value (List.app p [SIndex (Z.of_nat i0)]) v' :: go (S i0) ys'
-      end) i xs =
-    (fix go (i0:nat) (ys:list JSON.value) {struct ys} : list (list JSON.node) :=
-      match ys with
-      | [] => []
-      | v'::ys' => Exec.visit_df_value (List.app p [SIndex (Z.of_nat i0)]) v' :: go (S i0) ys'
-      end) i xs.
-Proof.
-  intros. reflexivity.
-Qed.
-
-Lemma visit_obj_aux_det :
-  forall p fs,
-    (fix go (gs:list (string*JSON.value)) {struct gs} : list (list JSON.node) :=
-      match gs with
-      | [] => []
-      | (k,v')::gs' => Exec.visit_df_value (List.app p [SName k]) v' :: go gs'
-      end) fs =
-    (fix go (gs:list (string*JSON.value)) {struct gs} : list (list JSON.node) :=
-      match gs with
-      | [] => []
-      | (k,v')::gs' => Exec.visit_df_value (List.app p [SName k]) v' :: go gs'
-      end) fs.
-Proof.
-  intros. reflexivity.
-Qed.
-
-Theorem visit_df_value_deterministic :
-  forall p v,
-    Exec.visit_df_value p v = Exec.visit_df_value p v.
-Proof.
-  intros. reflexivity.
-Qed.
-
 Lemma visit_arr_head_is_parent :
   forall p xs,
     xs <> [] ->

@@ -1,8 +1,7 @@
 # jsonpath-verified: Cure List
 
-1. Remove `visit_df_value_deterministic`, `visit_arr_aux_det`, `visit_obj_aux_det` (reflexivity-only "proofs").
-2. Remove the Totality section's trivial `exists res, f x = res` theorems and the trivial determinism lemmas (`sel_exec_deterministic`, `holds_b_deterministic`, `aeval_deterministic`).
-3. Change `is_prefix_of` from a `Lemma`/`Defined` to a `Definition`.
+1. Remove the Totality section's trivial `exists res, f x = res` theorems and the trivial determinism lemmas (`sel_exec_deterministic`, `holds_b_deterministic`, `aeval_deterministic`).
+2. Change `is_prefix_of` from a `Lemma`/`Defined` to a `Definition`.
 4. Eliminate the duplicated `prim_of_value` — remove the top-level copy (line 791), import from `JSONPath`.
 5. Factor `prim_eq`, `prim_lt`, `cmp_prim` into a single shared definition; have `Exec` reuse it.
 6. Eliminate the `Regex` module duplication — define module functions in terms of the top-level originals, or delete the top-level originals and use only the module.
