@@ -787,17 +787,6 @@ Definition cmp_prim (op:cmp) (x y:prim) : bool :=
   | CGe => orb (prim_lt y x) (prim_eq x y)
   end.
 
-(** Extract primitive from JSON value (duplicated for relational context). *)
-Definition prim_of_value (v:value) : option prim :=
-  match v with
-  | JNull => Some PNull
-  | JBool b => Some (PBool b)
-  | JNum n => Some (PNum n)
-  | JStr s => Some (PStr s)
-  | JArr _ => None
-  | JObject _ => None
-  end.
-
 (** Parameterized boolean filter evaluation (unused in final semantics). *)
 Fixpoint holds_b_simple (eval_func: query -> value -> list node)
                         (aeval_func: aexpr -> value -> option prim)
