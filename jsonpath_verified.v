@@ -646,7 +646,9 @@ Fixpoint nullable (r:regex) : bool :=
   | RStar _ => true
   | RPlus r1 => nullable r1
   | ROpt _ => true
-  | RRepeat r1 min _ => if Nat.eqb min 0 then true else nullable r1
+  | RRepeat r1 min max =>
+      if Nat.ltb max min then false
+      else if Nat.eqb min 0 then true else nullable r1
   | RCharClass _ _ => false
   end.
 
@@ -757,6 +759,400 @@ Definition regex_match (r:regex) (s:string) : bool :=
 (** Substring search: match r anywhere within s. *)
 Definition regex_search (r:regex) (s:string) : bool :=
   regex_match (RCat (RStar RAny) (RCat r (RStar RAny))) s.
+
+(* ------------------------------------------------------------ *)
+(* Denotational semantics for regular languages                 *)
+(* ------------------------------------------------------------ *)
+
+(** Language denoted by a regex: set of character lists accepted. *)
+Inductive lang : regex -> list ascii -> Prop :=
+| LangEps : lang REps []
+| LangChr : forall c, lang (RChr c) [c]
+| LangAny : forall c, lang RAny [c]
+| LangAltL : forall r1 r2 cs, lang r1 cs -> lang (RAlt r1 r2) cs
+| LangAltR : forall r1 r2 cs, lang r2 cs -> lang (RAlt r1 r2) cs
+| LangCat : forall r1 r2 cs1 cs2,
+    lang r1 cs1 -> lang r2 cs2 -> lang (RCat r1 r2) (cs1 ++ cs2)
+| LangStarNil : forall r, lang (RStar r) []
+| LangStarCons : forall r cs1 cs2,
+    cs1 <> [] -> lang r cs1 -> lang (RStar r) cs2 ->
+    lang (RStar r) (cs1 ++ cs2)
+| LangPlus : forall r cs1 cs2,
+    lang r cs1 -> lang (RStar r) cs2 ->
+    lang (RPlus r) (cs1 ++ cs2)
+| LangOpt : forall r cs, lang r cs -> lang (ROpt r) cs
+| LangOptNil : forall r, lang (ROpt r) []
+| LangRepeatNil : forall r max, lang (RRepeat r 0 max) []
+| LangRepeatStep : forall r min max cs1 cs2,
+    lang r cs1 -> lang (RRepeat r (min - 1) (max - 1)) cs2 ->
+    (max > 0)%nat ->
+    lang (RRepeat r min max) (cs1 ++ cs2)
+| LangCharClassPos : forall cs c,
+    char_in_list c cs = true ->
+    lang (RCharClass false cs) [c]
+| LangCharClassNeg : forall cs c,
+    char_in_list c cs = false ->
+    lang (RCharClass true cs) [c].
+
+(** nullable correctness: nullable r = true iff lang r []. *)
+
+Lemma nullable_sound : forall r, nullable r = true -> lang r [].
+Proof.
+  induction r; simpl; intro H; try discriminate.
+  - exact LangEps.
+  - apply Bool.orb_true_iff in H. destruct H as [H|H].
+    + apply LangAltL. apply IHr1. exact H.
+    + apply LangAltR. apply IHr2. exact H.
+  - apply Bool.andb_true_iff in H. destruct H as [H1 H2].
+    change (@nil ascii) with (@nil ascii ++ @nil ascii)%list.
+    apply LangCat; auto.
+  - apply LangStarNil.
+  - change (@nil ascii) with (@nil ascii ++ @nil ascii)%list.
+    apply LangPlus; [apply IHr; exact H | apply LangStarNil].
+  - apply LangOptNil.
+  - destruct (Nat.ltb max min) eqn:Hlt; [discriminate | ].
+    apply Nat.ltb_ge in Hlt.
+    destruct (Nat.eqb min 0) eqn:Hmin.
+    + apply Nat.eqb_eq in Hmin. subst. apply LangRepeatNil.
+    + apply lang_repeat_nullable; [apply IHr; exact H | lia].
+  - discriminate.
+Qed.
+
+Lemma nullable_complete : forall r, lang r [] -> nullable r = true.
+Proof.
+  intros r H. induction H; simpl; auto.
+  - apply Bool.orb_true_iff. left. exact IHlang.
+  - apply Bool.orb_true_iff. right. exact IHlang.
+  - destruct cs1, cs2; simpl in *; try discriminate; auto.
+    rewrite IHlang1, IHlang2. reflexivity.
+  - destruct cs1; [contradiction | discriminate].
+  - destruct cs1; simpl in *; try discriminate.
+    rewrite IHlang1. reflexivity.
+  - destruct (Nat.eqb 0 0) eqn:?; auto.
+  - destruct cs1; simpl in *.
+    + destruct (Nat.eqb min 0) eqn:Hmin; auto.
+      rewrite IHlang1. reflexivity.
+    + discriminate.
+Qed.
+
+(** deriv correctness: lang (deriv a r) cs <-> lang r (a :: cs). *)
+
+Lemma deriv_sound : forall a r cs,
+  lang (deriv a r) cs -> lang r (a :: cs).
+Proof.
+  intros a r. revert a.
+  induction r; intros a cs H; simpl in H.
+  - inversion H.
+  - inversion H.
+  - destruct (ascii_eqb a c) eqn:Heq.
+    + inversion H; subst.
+      unfold ascii_eqb in Heq.
+      destruct (ascii_dec a c); [subst; apply LangChr | discriminate].
+    + inversion H.
+  - inversion H; subst. apply LangAny.
+  - inversion H; subst.
+    + apply LangAltL. apply IHr1. exact H2.
+    + apply LangAltR. apply IHr2. exact H2.
+  - simpl in H.
+    destruct (nullable r1) eqn:Hnull.
+    + inversion H; subst.
+      * inversion H2; subst.
+        change (a :: cs1 ++ cs2)%list with ((a :: cs1) ++ cs2)%list.
+        apply LangCat; [apply IHr1; exact H4 | exact H5].
+      * change (a :: cs) with ((a :: []) ++ cs)%list.
+        apply LangCat; [| apply IHr2; exact H2].
+        change (a :: []) with ([a]).
+        assert (Hnil: lang r1 []) by (apply nullable_sound; exact Hnull).
+        (* Need: lang r1 [a] is wrong. We need a :: cs = [] ++ (a :: cs) *)
+        change ([a]) with (a :: []).
+        (* Actually, deriv a (RCat r1 r2) when nullable r1 =
+           RAlt (RCat (deriv a r1) r2) (deriv a r2)
+           The right branch gives lang (deriv a r2) cs, so lang r2 (a::cs).
+           We need lang (RCat r1 r2) (a::cs).
+           Since lang r1 [] and lang r2 (a::cs), we get lang (RCat r1 r2) ([] ++ a::cs). *)
+        change (a :: cs) with ([] ++ (a :: cs))%list.
+        apply LangCat; [apply nullable_sound; exact Hnull | apply IHr2; exact H2].
+    + inversion H; subst.
+      change (a :: cs1 ++ cs2)%list with ((a :: cs1) ++ cs2)%list.
+      apply LangCat; [apply IHr1; exact H3 | exact H5].
+  - inversion H; subst.
+    change (a :: cs1 ++ cs2)%list with ((a :: cs1) ++ cs2)%list.
+    apply LangStarCons; [intro Heq; discriminate | apply IHr; exact H3 | exact H5].
+  - inversion H; subst.
+    change (a :: cs1 ++ cs2)%list with ((a :: cs1) ++ cs2)%list.
+    apply LangPlus; [apply IHr; exact H3 | exact H5].
+  - apply LangOpt. apply IHr. exact H.
+  - destruct (Nat.eqb min 0) eqn:Hmin.
+    + destruct (Nat.eqb max 0) eqn:Hmax.
+      * inversion H.
+      * inversion H; subst.
+        -- inversion H2; subst.
+           change (a :: cs1 ++ cs2)%list with ((a :: cs1) ++ cs2)%list.
+           apply LangRepeatStep; [apply IHr; exact H4 | exact H5 | ].
+           apply Nat.eqb_neq in Hmax. lia.
+        -- inversion H2.
+    + inversion H; subst.
+      change (a :: cs1 ++ cs2)%list with ((a :: cs1) ++ cs2)%list.
+      apply LangRepeatStep; [apply IHr; exact H3 | exact H5 | ].
+      apply Nat.eqb_neq in Hmin. destruct max; [| lia].
+      (* min > 0, max = 0: deriv produces RCat (deriv a r) (RRepeat r (min-1) (0-1))
+         but RRepeat r _ (0-1) means max < min after subtracting, which should be empty.
+         Actually 0 - 1 = 0 in nat. So RRepeat r (min-1) 0.
+         If min-1 > 0, this is empty. If min-1 = 0 then min = 1. But min > 0.
+         If min = 1, then min-1 = 0, so RRepeat r 0 0 accepts [].
+         So cs2 = [] in the LangCat. So lang (RRepeat r 0 0) []. That's LangRepeatNil.
+         For the outer: LangRepeatStep with max = 0 requires max > 0. Contradiction.
+         So this case is actually impossible — deriv produces something,
+         but lang r (a :: cs) with RRepeat r min 0 where min > 0 is impossible.
+         We need to show the hypothesis leads to False. *)
+      exfalso.
+      clear -H5 Hmin.
+      simpl in H5.
+      (* H5 : lang (RRepeat r (min - 1) (0 - 1)) cs2
+         0 - 1 = 0 in nat, so RRepeat r (min-1) 0
+         If min - 1 = 0 then min = 1 (since min > 0 from Hmin).
+         lang (RRepeat r 0 0) cs2 means cs2 = [] (LangRepeatNil or LangRepeatStep with max > 0 which is 0 > 0, false).
+         If min - 1 > 0 then we need lang (RRepeat r k 0) cs2 with k > 0.
+         LangRepeatNil requires min = 0. LangRepeatStep requires max > 0 = 0 > 0 = false. *)
+      remember (min - 1)%nat as m.
+      remember (0 - 1)%nat as mx.
+      simpl in Heqmx. subst mx.
+      induction H5.
+      * apply Nat.eqb_neq in Hmin. lia.
+      * lia.
+  - unfold char_in_list in H.
+    destruct neg.
+    + destruct (char_in_list a cs) eqn:Hcl.
+      * inversion H.
+      * inversion H; subst. apply LangCharClassNeg. exact Hcl.
+    + destruct (char_in_list a cs) eqn:Hcl.
+      * inversion H; subst. apply LangCharClassPos. exact Hcl.
+      * inversion H.
+Qed.
+
+Lemma deriv_complete : forall a r cs,
+  lang r (a :: cs) -> lang (deriv a r) cs.
+Proof.
+  intros a r. revert a.
+  induction r; intros a cs H; simpl.
+  - inversion H.
+  - inversion H.
+  - inversion H; subst.
+    unfold ascii_eqb. destruct (ascii_dec a a); [apply LangEps | contradiction].
+  - inversion H; subst. apply LangEps.
+  - inversion H; subst.
+    + apply LangAltL. apply IHr1. exact H2.
+    + apply LangAltR. apply IHr2. exact H2.
+  - inversion H; subst.
+    destruct (nullable r1) eqn:Hnull.
+    + destruct cs1 as [| a' cs1'].
+      * simpl in H0. subst.
+        apply LangAltR. apply IHr2. exact H4.
+      * simpl in H0. inversion H0; subst.
+        apply LangAltL. apply LangCat; [apply IHr1; exact H3 | exact H4].
+    + destruct cs1 as [| a' cs1'].
+      * exfalso. apply (Bool.diff_false_true).
+        rewrite <- Hnull. apply nullable_complete. exact H3.
+      * simpl in H0. inversion H0; subst.
+        apply LangCat; [apply IHr1; exact H3 | exact H4].
+  - inversion H; subst.
+    destruct cs1 as [| a' cs1']; [contradiction | ].
+    simpl in H1. inversion H1; subst.
+    apply LangCat; [apply IHr; exact H4 | exact H5].
+  - inversion H; subst.
+    destruct cs1 as [| a' cs1'].
+    + simpl in H0. subst.
+      (* lang (RStar r) (a :: cs) *)
+      inversion H4; subst.
+      * discriminate.
+      * destruct cs1; [contradiction | ].
+        simpl in H0. inversion H0; subst.
+        apply LangCat; [apply IHr; exact H6 | exact H7].
+    + simpl in H0. inversion H0; subst.
+      apply LangCat; [apply IHr; exact H3 | exact H4].
+  - inversion H; subst. apply IHr. exact H2.
+  - destruct (Nat.eqb min 0) eqn:Hmin.
+    + destruct (Nat.eqb max 0) eqn:Hmax.
+      * apply Nat.eqb_eq in Hmin. apply Nat.eqb_eq in Hmax. subst.
+        inversion H; subst.
+        -- discriminate.
+        -- lia.
+      * inversion H; subst.
+        -- discriminate.
+        -- apply LangAltL.
+           destruct cs1 as [| a' cs1'].
+           ++ simpl in H0. subst.
+              apply Nat.eqb_eq in Hmin. subst.
+              apply LangCat; [apply IHr; exact H3 | exact H4].
+           ++ simpl in H0. inversion H0; subst.
+              apply LangCat; [apply IHr; exact H3 | exact H4].
+    + inversion H; subst.
+      * apply Nat.eqb_neq in Hmin. lia.
+      * destruct cs1 as [| a' cs1'].
+        -- simpl in H0. subst.
+           exfalso. apply Nat.eqb_neq in Hmin.
+           assert (nullable r = true) by (apply nullable_complete; exact H3).
+           (* We need lang (RRepeat r (min-1) (max-1)) (a :: cs)
+              but we derived from cs1 = [] so the a :: cs comes from cs2 *)
+           apply LangCat; [apply IHr; exact H3 | exact H4].
+        -- simpl in H0. inversion H0; subst.
+           apply LangCat; [apply IHr; exact H3 | exact H4].
+  - destruct neg.
+    + inversion H; subst.
+      simpl. rewrite H2. apply LangEps.
+    + inversion H; subst.
+      simpl. rewrite H2. apply LangEps.
+Qed.
+
+(** rsimpl preserves language equivalence. *)
+Lemma rsimpl_sound : forall r cs, lang (rsimpl r) cs -> lang r cs.
+Proof.
+  induction r; intros cs H; simpl in H; try exact H.
+  - (* RAlt *)
+    destruct (rsimpl r1) eqn:Hr1; destruct (rsimpl r2) eqn:Hr2;
+      try (inversion H; subst;
+        [apply LangAltL; apply IHr1; rewrite Hr1; exact H2
+        |apply LangAltR; apply IHr2; rewrite Hr2; exact H2]);
+      try (apply LangAltR; apply IHr2; rewrite Hr2; exact H);
+      try (apply LangAltL; apply IHr1; rewrite Hr1; exact H).
+  - (* RCat *)
+    destruct (rsimpl r1) eqn:Hr1; destruct (rsimpl r2) eqn:Hr2;
+      try (inversion H; subst;
+        apply LangCat; [apply IHr1; rewrite Hr1; exact H3
+                       | apply IHr2; rewrite Hr2; exact H5]);
+      try inversion H;
+      try (change (cs) with ([] ++ cs)%list;
+           apply LangCat; [apply IHr1; rewrite Hr1; apply LangEps
+                          | apply IHr2; rewrite Hr2; exact H]);
+      try (change (cs) with (cs ++ [])%list;
+           rewrite <- app_nil_r;
+           apply LangCat; [apply IHr1; rewrite Hr1; exact H
+                          | apply IHr2; rewrite Hr2; apply LangEps]).
+  - (* RStar *)
+    destruct (rsimpl r) eqn:Hr;
+      try (inversion H; subst;
+        [apply LangStarNil
+        |apply LangStarCons; [exact H2 | apply IHr; rewrite Hr; exact H4 | exact H5]]);
+      try (inversion H; subst; apply LangStarNil).
+  - (* RPlus *)
+    destruct (rsimpl r) eqn:Hr;
+      try (inversion H; subst;
+        apply LangPlus; [apply IHr; rewrite Hr; exact H3 | exact H5]);
+      try inversion H.
+  - (* ROpt *)
+    inversion H; subst.
+    + apply LangOpt. apply IHr. exact H2.
+    + apply LangOptNil.
+  - (* RRepeat *)
+    destruct (Nat.ltb max min) eqn:Hlt.
+    + inversion H.
+    + destruct (Nat.eqb min 0) eqn:Hmin.
+      * destruct (Nat.eqb max 0) eqn:Hmax.
+        -- inversion H; subst. apply Nat.eqb_eq in Hmin. subst. apply LangRepeatNil.
+        -- inversion H; subst.
+           ++ apply Nat.eqb_eq in Hmin. subst. apply LangRepeatNil.
+           ++ apply LangRepeatStep; [apply IHr; exact H3 | exact H4 | exact H5].
+      * inversion H; subst.
+        -- apply Nat.eqb_neq in Hmin. lia.
+        -- apply LangRepeatStep; [apply IHr; exact H3 | exact H4 | exact H5].
+Qed.
+
+Lemma rsimpl_complete : forall r cs, lang r cs -> lang (rsimpl r) cs.
+Proof.
+  induction r; intros cs H; simpl; try exact H.
+  - (* RAlt *)
+    inversion H; subst.
+    + specialize (IHr1 _ H2).
+      destruct (rsimpl r1); destruct (rsimpl r2);
+        try (apply LangAltL; exact IHr1); exact IHr1.
+    + specialize (IHr2 _ H2).
+      destruct (rsimpl r1); destruct (rsimpl r2);
+        try (apply LangAltR; exact IHr2); exact IHr2.
+  - (* RCat *)
+    inversion H; subst.
+    specialize (IHr1 _ H3). specialize (IHr2 _ H5).
+    destruct (rsimpl r1) eqn:Hr1; destruct (rsimpl r2) eqn:Hr2;
+      try (apply LangCat; [exact IHr1 | exact IHr2]);
+      try inversion IHr1;
+      try inversion IHr2;
+      try (subst; rewrite app_nil_r; exact IHr2);
+      try (subst; simpl; exact IHr1).
+    + subst. inversion IHr1; subst. simpl. exact IHr2.
+    + inversion IHr2; subst. rewrite app_nil_r. exact IHr1.
+  - (* RStar *)
+    inversion H; subst.
+    + destruct (rsimpl r); try apply LangStarNil; apply LangEps.
+    + specialize (IHr _ H4).
+      destruct (rsimpl r) eqn:Hr;
+        try (apply LangStarCons; [exact H2 | exact IHr | exact H5]);
+        try inversion IHr.
+      * subst. contradiction.
+      * subst. contradiction.
+  - (* RPlus *)
+    inversion H; subst.
+    specialize (IHr _ H3).
+    destruct (rsimpl r) eqn:Hr;
+      try (apply LangPlus; [exact IHr | exact H5]);
+      try inversion IHr.
+  - (* ROpt *)
+    inversion H; subst.
+    + apply LangOpt. apply IHr. exact H2.
+    + apply LangOptNil.
+  - (* RRepeat *)
+    destruct (Nat.ltb max min) eqn:Hlt.
+    + apply Nat.ltb_lt in Hlt.
+      inversion H; subst.
+      * lia.
+      * lia.
+    + destruct (Nat.eqb min 0) eqn:Hmin.
+      * destruct (Nat.eqb max 0) eqn:Hmax.
+        -- apply Nat.eqb_eq in Hmin. apply Nat.eqb_eq in Hmax. subst.
+           inversion H; subst.
+           ++ apply LangEps.
+           ++ lia.
+        -- inversion H; subst.
+           ++ apply LangRepeatNil.
+           ++ apply LangRepeatStep; [apply IHr; exact H3 | exact H4 | exact H5].
+      * inversion H; subst.
+        -- apply Nat.eqb_neq in Hmin. lia.
+        -- apply LangRepeatStep; [apply IHr; exact H3 | exact H4 | exact H5].
+Qed.
+
+(** matches_from correctness: matches_from r cs = true <-> lang r cs. *)
+Lemma matches_from_sound : forall cs r,
+  matches_from r cs = true -> lang r cs.
+Proof.
+  induction cs as [| a cs' IH]; intros r H; simpl in H.
+  - apply nullable_sound. exact H.
+  - apply deriv_sound. apply rsimpl_sound. apply IH. exact H.
+Qed.
+
+Lemma matches_from_complete : forall cs r,
+  lang r cs -> matches_from r cs = true.
+Proof.
+  induction cs as [| a cs' IH]; intros r H; simpl.
+  - apply nullable_complete. exact H.
+  - apply IH. apply rsimpl_complete. apply deriv_complete. exact H.
+Qed.
+
+(** regex_match correctness: regex_match r s = true <-> lang r (list_of_string s). *)
+Theorem regex_match_sound : forall r s,
+  regex_match r s = true -> lang r (list_of_string s).
+Proof.
+  intros r s H. unfold regex_match in H. apply matches_from_sound. exact H.
+Qed.
+
+Theorem regex_match_complete : forall r s,
+  lang r (list_of_string s) -> regex_match r s = true.
+Proof.
+  intros r s H. unfold regex_match. apply matches_from_complete. exact H.
+Qed.
+
+Theorem regex_match_correct : forall r s,
+  regex_match r s = true <-> lang r (list_of_string s).
+Proof.
+  intros r s. split; [apply regex_match_sound | apply regex_match_complete].
+Qed.
 
 (** Primitive equality: structural equality on comparable types. *)
 Definition prim_eq (p q:prim) : bool :=
