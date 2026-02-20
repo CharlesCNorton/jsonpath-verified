@@ -1304,8 +1304,17 @@ Definition aety (a:aexpr) : primty :=
   | AValue _         => TAnyPrim
   end.
 
-(** Type compatibility for comparisons (relaxed: all primitives comparable). *)
-Definition comparable (t1 t2:primty) : bool := true.
+(** Type compatibility for comparisons: same concrete type, or either is TAnyPrim. *)
+Definition comparable (t1 t2:primty) : bool :=
+  match t1, t2 with
+  | TAnyPrim, _ => true
+  | _, TAnyPrim => true
+  | TNull, TNull => true
+  | TBool, TBool => true
+  | TNum, TNum => true
+  | TStr, TStr => true
+  | _, _ => false
+  end.
 
 (** Well-formedness check for filter expressions (conservative). *)
 Fixpoint wf_fexpr (f:fexpr) : bool :=
