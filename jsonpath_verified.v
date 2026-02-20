@@ -1540,10 +1540,10 @@ Theorem wf_fmatch_type_safe :
   forall a r v,
     Typing.wf_fexpr (FMatch a r) = true ->
     Exec.aeval a v = None \/
-    (exists s, Exec.aeval a v = Some (PStr s)) \/
-    (Exec.aeval a v = Some PNull) \/
-    (exists b, Exec.aeval a v = Some (PBool b)) \/
-    (exists n, Exec.aeval a v = Some (PNum n)).
+    exists s, Exec.aeval a v = Some (PStr s) \/
+              Exec.aeval a v = Some PNull \/
+              exists b, Exec.aeval a v = Some (PBool b) \/
+              exists n, Exec.aeval a v = Some (PNum n).
 Proof.
   intros a r v Hwf.
   simpl in Hwf.
@@ -1552,14 +1552,15 @@ Proof.
     + pose proof (aeval_type_soundness a v p E) as Ht.
       rewrite Ety in Ht.
       destruct p; try contradiction.
-      right; left. eexists; reflexivity.
+      right. eexists. left. reflexivity.
     + pose proof (aeval_type_soundness a v p E) as Ht.
       rewrite Ety in Ht.
       pose proof (any_prim_type_cases p Ht) as Hcases.
-      destruct Hcases as [[s Hs]|[[b Hb]|[[n Hn]|Hnull]]]; subst; auto.
-      * right; left. eexists; reflexivity.
-      * right; right; right; left. eexists; reflexivity.
-      * right; right; right; right. eexists; reflexivity.
+      destruct Hcases as [[s Hs]|[[b Hb]|[[n Hn]|Hnull]]]; subst.
+      * right. eexists. left. reflexivity.
+      * right. exists ""%string. right. right. exists b. left. reflexivity.
+      * right. exists ""%string. right. right. exists true. right. eexists. reflexivity.
+      * right. exists ""%string. right. left. reflexivity.
   - left; reflexivity.
 Qed.
 
@@ -1568,10 +1569,10 @@ Theorem wf_fsearch_type_safe :
   forall a r v,
     Typing.wf_fexpr (FSearch a r) = true ->
     Exec.aeval a v = None \/
-    (exists s, Exec.aeval a v = Some (PStr s)) \/
-    (Exec.aeval a v = Some PNull) \/
-    (exists b, Exec.aeval a v = Some (PBool b)) \/
-    (exists n, Exec.aeval a v = Some (PNum n)).
+    exists s, Exec.aeval a v = Some (PStr s) \/
+              Exec.aeval a v = Some PNull \/
+              exists b, Exec.aeval a v = Some (PBool b) \/
+              exists n, Exec.aeval a v = Some (PNum n).
 Proof.
   intros a r v Hwf.
   simpl in Hwf.
@@ -1580,63 +1581,16 @@ Proof.
     + pose proof (aeval_type_soundness a v p E) as Ht.
       rewrite Ety in Ht.
       destruct p; try contradiction.
-      right; left. eexists; reflexivity.
+      right. eexists. left. reflexivity.
     + pose proof (aeval_type_soundness a v p E) as Ht.
       rewrite Ety in Ht.
       pose proof (any_prim_type_cases p Ht) as Hcases.
-      destruct Hcases as [[s Hs]|[[b Hb]|[[n Hn]|Hnull]]]; subst; auto.
-      * right; left. eexists; reflexivity.
-      * right; right; right; left. eexists; reflexivity.
-      * right; right; right; right. eexists; reflexivity.
+      destruct Hcases as [[s Hs]|[[b Hb]|[[n Hn]|Hnull]]]; subst.
+      * right. eexists. left. reflexivity.
+      * right. exists ""%string. right. right. exists b. left. reflexivity.
+      * right. exists ""%string. right. right. exists true. right. eexists. reflexivity.
+      * right. exists ""%string. right. left. reflexivity.
   - left; reflexivity.
-Qed.
-
-Lemma reassoc_match_type :
-  forall a r v,
-    Typing.wf_fexpr (FMatch a r) = true ->
-    (Exec.aeval a v = None \/
-    (exists s, Exec.aeval a v = Some (PStr s)) \/
-    (Exec.aeval a v = Some PNull) \/
-    (exists b, Exec.aeval a v = Some (PBool b)) \/
-    (exists n, Exec.aeval a v = Some (PNum n))) ->
-    (Exec.aeval a v = None \/
-    (exists s,
-       Exec.aeval a v = Some (PStr s) \/
-       Exec.aeval a v = Some PNull \/
-       (exists b,
-          Exec.aeval a v = Some (PBool b) \/
-          (exists n, Exec.aeval a v = Some (PNum n))))).
-Proof.
-  intros a r v Hwf H.
-  destruct H as [H|[[s H]|[H|[[b H]|[n H]]]]]; auto.
-  - right. exists s. left. exact H.
-  - right. exists ""%string. right. left. exact H.
-  - right. exists ""%string. right. right. exists b. left. exact H.
-  - right. exists ""%string. right. right. exists true. right. exists n. exact H.
-Qed.
-
-Lemma reassoc_search_type :
-  forall a r v,
-    Typing.wf_fexpr (FSearch a r) = true ->
-    (Exec.aeval a v = None \/
-    (exists s, Exec.aeval a v = Some (PStr s)) \/
-    (Exec.aeval a v = Some PNull) \/
-    (exists b, Exec.aeval a v = Some (PBool b)) \/
-    (exists n, Exec.aeval a v = Some (PNum n))) ->
-    (Exec.aeval a v = None \/
-    (exists s,
-       Exec.aeval a v = Some (PStr s) \/
-       Exec.aeval a v = Some PNull \/
-       (exists b,
-          Exec.aeval a v = Some (PBool b) \/
-          (exists n, Exec.aeval a v = Some (PNum n))))).
-Proof.
-  intros a r v Hwf H.
-  destruct H as [H|[[s H]|[H|[[b H]|[n H]]]]]; auto.
-  - right. exists s. left. exact H.
-  - right. exists ""%string. right. left. exact H.
-  - right. exists ""%string. right. right. exists b. left. exact H.
-  - right. exists ""%string. right. right. exists true. right. exists n. exact H.
 Qed.
 
 (** Type soundness: well-formed filters perform type-safe operations. *)
@@ -1670,8 +1624,8 @@ Proof.
   intros f Hwf n.
   split; [|split].
   - intros op a b Heq v pa pb _ Ha Hb. subst f. eapply wf_fcmp_operands_compatible; eauto.
-  - intros a r0 Heq v _. subst f. eapply (reassoc_match_type a r0 v); eauto. apply (wf_fmatch_type_safe a r0 v); auto.
-  - intros a r0 Heq v _. subst f. eapply (reassoc_search_type a r0 v); eauto. apply (wf_fsearch_type_safe a r0 v); auto.
+  - intros a r0 Heq v _. subst f. apply (wf_fmatch_type_safe a r0 v); auto.
+  - intros a r0 Heq v _. subst f. apply (wf_fsearch_type_safe a r0 v); auto.
 Qed.
 
 (* ------------------------------------------------------------ *)
