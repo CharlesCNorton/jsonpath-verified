@@ -811,7 +811,7 @@ Fixpoint holds_b_simple (eval_func: query -> value -> list node)
   | FExists q =>
       negb (Nat.eqb (List.length (eval_func q v)) 0)
   | FCmp op a b =>
-      match aeval_func a v, aeval_func a v with
+      match aeval_func a v, aeval_func b v with
       | Some pa, Some pb => cmp_prim op pa pb
       | _, _ => false
       end
