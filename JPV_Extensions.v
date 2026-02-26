@@ -2809,6 +2809,26 @@ Definition surface_eval_vectors : list surface_eval_case :=
   ; ("$.store.book[1:3].price", stress_doc,
       [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "price"], JSON.JNum 12)
       ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "price"], JSON.JNum 8)])
+  ; ("$.store.bicycle.color", stress_doc,
+      [([JSON.SName "store"; JSON.SName "bicycle"; JSON.SName "color"], JSON.JStr "red")])
+  ; ("$.store.book[*].author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "author"], JSON.JStr "Evelyn")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")])
+  ; ("$.store.book[:].author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "author"], JSON.JStr "Evelyn")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")])
+  ; ("$.store.book[0:3:2].author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")])
+  ; ("$.store.book[3:0:-1].author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "author"], JSON.JStr "Evelyn")])
+  ; ("$.store.book[0,2].author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")])
+  ; ("$.missing.path", stress_doc, [])
   ; ("$..author", stress_doc,
       [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")
       ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "author"], JSON.JStr "Evelyn")
@@ -2817,13 +2837,39 @@ Definition surface_eval_vectors : list surface_eval_case :=
       [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")
       ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "author"], JSON.JStr "Evelyn")
       ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")])
+  ; ("$..price", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "price"], JSON.JNum 8)
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "price"], JSON.JNum 12)
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "price"], JSON.JNum 8)
+      ;([JSON.SName "store"; JSON.SName "bicycle"; JSON.SName "price"], JSON.JNum 19)])
+  ; ("$..bicycle.price", stress_doc,
+      [([JSON.SName "store"; JSON.SName "bicycle"; JSON.SName "price"], JSON.JNum 19)])
+  ; ("$[?(exists)]", stress_nums,
+      [([JSON.SIndex 0], JSON.JNum 1)
+      ;([JSON.SIndex 1], JSON.JNum 12)
+      ;([JSON.SIndex 2], JSON.JNum 8)
+      ;([JSON.SIndex 3], JSON.JNum (-3))
+      ;([JSON.SIndex 4], JSON.JNum 0)])
   ; ("$[?(cmp(gt,value,10))]", stress_nums,
       [([JSON.SIndex 1], JSON.JNum 12)])
+  ; ("$[?(cmp(lt,value,0))]", stress_nums,
+      [([JSON.SIndex 3], JSON.JNum (-3))])
   ; ("$[?(cmp(eq,value,8))]", stress_nums,
       [([JSON.SIndex 2], JSON.JNum 8)])
+  ; ("$[?(cmp(ge,value,8))]", stress_nums,
+      [([JSON.SIndex 1], JSON.JNum 12)
+      ;([JSON.SIndex 2], JSON.JNum 8)])
+  ; ("$[?(cmp(ne,value,8))]", stress_nums,
+      [([JSON.SIndex 0], JSON.JNum 1)
+      ;([JSON.SIndex 1], JSON.JNum 12)
+      ;([JSON.SIndex 3], JSON.JNum (-3))
+      ;([JSON.SIndex 4], JSON.JNum 0)])
   ; ("$[?(or(cmp(eq,value,1),cmp(eq,value,12)))]", stress_nums,
       [([JSON.SIndex 0], JSON.JNum 1)
       ;([JSON.SIndex 1], JSON.JNum 12)])
+  ; ("$[?(and(cmp(gt,value,0),cmp(lt,value,10)))]", stress_nums,
+      [([JSON.SIndex 0], JSON.JNum 1)
+      ;([JSON.SIndex 2], JSON.JNum 8)])
   ; ("$[?(not(cmp(eq,value,1)))]", stress_nums,
       [([JSON.SIndex 1], JSON.JNum 12)
       ;([JSON.SIndex 2], JSON.JNum 8)
@@ -2836,12 +2882,15 @@ Definition surface_eval_vectors : list surface_eval_case :=
       ;([JSON.SIndex 1], JSON.JStr "Bob")
       ;([JSON.SIndex 2], JSON.JStr "Helen")
       ;([JSON.SIndex 3], JSON.JStr "X")])
+  ; ("$[?(match(value,eps))]", stress_strs,
+      [([JSON.SIndex 4], JSON.JStr "")])
   ; ("$[?(search(value,eps))]", stress_strs,
       [([JSON.SIndex 0], JSON.JStr "Nigel")
       ;([JSON.SIndex 1], JSON.JStr "Bob")
       ;([JSON.SIndex 2], JSON.JStr "Helen")
       ;([JSON.SIndex 3], JSON.JStr "X")
       ;([JSON.SIndex 4], JSON.JStr "")])
+  ; ("$[?(match(value,empty))]", stress_strs, [])
   ].
 
 Definition run_surface_eval_case (c:surface_eval_case) : bool :=
@@ -2855,9 +2904,60 @@ Definition run_surface_eval_case (c:surface_eval_case) : bool :=
 Definition prop_surface_eval_vectors : bool :=
   forallb run_surface_eval_case surface_eval_vectors.
 
+Definition surface_diff_case : Type := ((string * JSONPath.query) * JSON.value)%type.
+
+Definition surface_diff_vectors : list surface_diff_case :=
+  [ (("$", JSONPath.Query []), stress_doc)
+  ; (("$.store.book[0].author",
+      JSONPath.Query
+        [JSONPath.Child [JSONPath.SelName "store"];
+         JSONPath.Child [JSONPath.SelName "book"];
+         JSONPath.Child [JSONPath.SelIndex 0];
+         JSONPath.Child [JSONPath.SelName "author"]]), stress_doc)
+  ; (("$..author",
+      JSONPath.Query [JSONPath.Desc [JSONPath.SelName "author"]]), stress_doc)
+  ; (("$..bicycle.price",
+      JSONPath.Query
+        [JSONPath.Desc [JSONPath.SelName "bicycle"];
+         JSONPath.Child [JSONPath.SelName "price"]]), stress_doc)
+  ; (("$[?(cmp(gt,value,10))]",
+      JSONPath.Query
+        [JSONPath.Child
+           [JSONPath.SelFilter
+              (JSONPath.FCmp JSONPath.CGt
+                 (JSONPath.AValue (JSONPath.Query []))
+                 (JSONPath.APrim (JSONPath.PNum 10)))]]), stress_nums)
+  ; (("$[?(or(cmp(eq,value,1),cmp(eq,value,12)))]",
+      JSONPath.Query
+        [JSONPath.Child
+           [JSONPath.SelFilter
+              (JSONPath.FOr
+                 (JSONPath.FCmp JSONPath.CEq
+                    (JSONPath.AValue (JSONPath.Query []))
+                    (JSONPath.APrim (JSONPath.PNum 1)))
+                 (JSONPath.FCmp JSONPath.CEq
+                    (JSONPath.AValue (JSONPath.Query []))
+                    (JSONPath.APrim (JSONPath.PNum 12))))]]), stress_nums)
+  ].
+
+Definition run_surface_diff_case (c:surface_diff_case) : bool :=
+  let '((s, q_ref), J) := c in
+  match JSONPathABNF.parse_surface_query_string (Unicode.string_to_ustring s) with
+  | JSONPathABNF.SurfaceParseOk q =>
+      nodes_eqb (Exec.eval_exec q J) (Exec.eval_exec q_ref J)
+  | _ => false
+  end.
+
+Definition prop_surface_ast_differential : bool :=
+  forallb run_surface_diff_case surface_diff_vectors.
+
 Definition surface_parse_error_vectors : list string :=
   [ "$.store.book[?@.price > 10].author"
   ; "$[?(cmp(gt,@,10))]"
+  ; "$["
+  ; "$.store.book["
+  ; "$[?(cmp(gt,value,))]"
+  ; "$.store.."
   ].
 
 Definition run_surface_error_case (s:string) : bool :=
@@ -2871,7 +2971,8 @@ Definition prop_surface_parse_error_vectors : bool :=
 
 Definition quickchick_surface_stress_suite : bool :=
   prop_surface_eval_vectors &&
-  prop_surface_parse_error_vectors.
+  prop_surface_parse_error_vectors &&
+  prop_surface_ast_differential.
 
 Definition quickchick_core_suite : bool :=
   prop_linear_len_le1 &&

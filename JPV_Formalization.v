@@ -172,6 +172,249 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
+(* Unrestricted Direct Relational Layer (Constructor Complete)  *)
+(* ------------------------------------------------------------ *)
+
+Module DirectUnrestricted.
+Import JSON JSONPath Exec.
+
+Inductive eval_rel : query -> value -> list node -> Prop :=
+| EvalRel :
+    forall q J,
+      eval_rel q J (Exec.eval_exec q J).
+
+Theorem eval_reflection :
+  forall q J res,
+    eval_rel q J res <-> res = Exec.eval_exec q J.
+Proof.
+  intros q J res.
+  split.
+  - intro H. inversion H; subst; reflexivity.
+  - intro H. subst. constructor.
+Qed.
+
+Inductive aeval_rel : aexpr -> value -> prim -> Prop :=
+| AevalPrim :
+    forall v p,
+      aeval_rel (APrim p) v p
+| AevalCount :
+    forall q v,
+      aeval_rel (ACount q) v (PNum (Q_of_nat (List.length (Exec.eval_exec q v))))
+| AevalValue :
+    forall q v p' v1 p,
+      Exec.eval_exec q v = [(p', v1)] ->
+      prim_of_value v1 = Some p ->
+      aeval_rel (AValue q) v p
+| AevalLengthStr :
+    forall q v p' s,
+      Exec.eval_exec q v = [(p', JStr s)] ->
+      aeval_rel (ALengthV q) v (PNum (Q_of_nat (String.length s)))
+| AevalLengthArr :
+    forall q v p' xs,
+      Exec.eval_exec q v = [(p', JArr xs)] ->
+      aeval_rel (ALengthV q) v (PNum (Q_of_nat (List.length xs)))
+| AevalLengthObj :
+    forall q v p' fs,
+      Exec.eval_exec q v = [(p', JObject fs)] ->
+      aeval_rel (ALengthV q) v (PNum (Q_of_nat (List.length fs))).
+
+Theorem aeval_reflection :
+  forall a v p,
+    aeval_rel a v p <-> Exec.aeval a v = Some p.
+Proof.
+  intros a v p.
+  split.
+  - intro H.
+    inversion H; subst; cbn.
+    + reflexivity.
+    + reflexivity.
+    + unfold Exec.eval_exec in H0. rewrite H0. exact H1.
+    + unfold Exec.eval_exec in H0. rewrite H0. reflexivity.
+    + unfold Exec.eval_exec in H0. rewrite H0. reflexivity.
+    + unfold Exec.eval_exec in H0. rewrite H0. reflexivity.
+  - intro Hexec.
+    destruct a as [p0|q|q|q]; cbn in Hexec.
+    + inversion Hexec; subst. constructor.
+    + inversion Hexec; subst. constructor.
+    + remember (Exec.eval_exec_impl Exec.sel_exec q v) as ns eqn:Ens.
+      destruct ns as [|[p' v1] rest]; cbn in Hexec; try discriminate.
+      destruct rest as [|n2 rest']; cbn in Hexec; try discriminate.
+      destruct (prim_of_value v1) as [p1|] eqn:Hpov; try discriminate.
+      inversion Hexec; subst.
+      apply (AevalValue q v p' v1 p).
+      * unfold Exec.eval_exec. symmetry. exact Ens.
+      * exact Hpov.
+    + remember (Exec.eval_exec_impl Exec.sel_exec q v) as ns eqn:Ens.
+      destruct ns as [|[p' v1] rest]; cbn in Hexec; try discriminate.
+      destruct rest as [|n2 rest'].
+      * cbn in Hexec.
+        destruct v1 as [|b1|n1|s|xs|fs]; cbn in Hexec; try discriminate.
+        -- inversion Hexec; subst.
+           apply (AevalLengthStr q v p' s).
+           unfold Exec.eval_exec. symmetry. exact Ens.
+        -- inversion Hexec; subst.
+           apply (AevalLengthArr q v p' xs).
+           unfold Exec.eval_exec. symmetry. exact Ens.
+        -- inversion Hexec; subst.
+           apply (AevalLengthObj q v p' fs).
+           unfold Exec.eval_exec. symmetry. exact Ens.
+      * destruct v1; cbn in Hexec; discriminate.
+Qed.
+
+Inductive holds_rel : fexpr -> node -> Prop :=
+| HoldsTrue :
+    forall n,
+      holds_rel FTrue n
+| HoldsNot :
+    forall g n,
+      Exec.holds_b g n = false ->
+      holds_rel (FNot g) n
+| HoldsAnd :
+    forall g h n,
+      holds_rel g n ->
+      holds_rel h n ->
+      holds_rel (FAnd g h) n
+| HoldsOrLeft :
+    forall g h n,
+      holds_rel g n ->
+      holds_rel (FOr g h) n
+| HoldsOrRight :
+    forall g h n,
+      holds_rel h n ->
+      holds_rel (FOr g h) n
+| HoldsExists :
+    forall q p v,
+      Exec.eval_exec q v <> [] ->
+      holds_rel (FExists q) (p, v)
+| HoldsCmp :
+    forall op a b p v pa pb,
+      aeval_rel a v pa ->
+      aeval_rel b v pb ->
+      cmp_prim op pa pb = true ->
+      holds_rel (FCmp op a b) (p, v)
+| HoldsMatch :
+    forall a r p v s,
+      aeval_rel a v (PStr s) ->
+      regex_match r s = true ->
+      holds_rel (FMatch a r) (p, v)
+| HoldsSearch :
+    forall a r p v s,
+      aeval_rel a v (PStr s) ->
+      regex_search r s = true ->
+      holds_rel (FSearch a r) (p, v).
+
+Theorem holds_reflection :
+  forall f n,
+    holds_rel f n <-> Exec.holds_b f n = true.
+Proof.
+  induction f as [|g IHg|g IHg h IHh|g IHg h IHh|q|op a b|a r|a r];
+    intros [p v]; split; intro H.
+  - reflexivity.
+  - constructor.
+  - inversion H; subst; simpl.
+    rewrite H1. reflexivity.
+  - simpl in H.
+    apply negb_true_iff in H.
+    constructor. exact H.
+  - inversion H; subst; simpl.
+    apply andb_true_iff.
+    match goal with
+    | Hgrel : holds_rel g (p, v), Hhrel : holds_rel h (p, v) |- _ =>
+        split;
+        [apply (proj1 (IHg (p, v))); exact Hgrel
+        |apply (proj1 (IHh (p, v))); exact Hhrel]
+    end.
+  - simpl in H.
+    apply andb_true_iff in H as [Hg Hh].
+    apply HoldsAnd.
+    + apply (proj2 (IHg (p, v))). exact Hg.
+    + apply (proj2 (IHh (p, v))). exact Hh.
+  - inversion H; subst; simpl.
+    + apply orb_true_iff. left.
+      match goal with
+      | Hgrel : holds_rel g (p, v) |- _ =>
+          apply (proj1 (IHg (p, v))); exact Hgrel
+      end.
+    + apply orb_true_iff. right.
+      match goal with
+      | Hhrel : holds_rel h (p, v) |- _ =>
+          apply (proj1 (IHh (p, v))); exact Hhrel
+      end.
+  - simpl in H.
+    apply orb_true_iff in H as [Hg|Hh].
+    + apply HoldsOrLeft.
+      apply (proj2 (IHg (p, v))). exact Hg.
+    + apply HoldsOrRight.
+      apply (proj2 (IHh (p, v))). exact Hh.
+  - inversion H; subst; simpl.
+    apply negb_true_iff.
+    apply Nat.eqb_neq.
+    intro Heq.
+    match goal with
+    | Hne : Exec.eval_exec q v <> [] |- _ =>
+        apply Hne;
+        apply length_zero_iff_nil;
+        exact Heq
+    end.
+  - simpl in H.
+    apply negb_true_iff in H.
+    apply Nat.eqb_neq in H.
+    apply HoldsExists.
+    intro Hnil.
+    apply H.
+    unfold Exec.eval_exec in Hnil.
+    rewrite Hnil.
+    reflexivity.
+  - inversion H; subst; simpl.
+    match goal with
+    | Hra : aeval_rel a v ?pa,
+      Hrb : aeval_rel b v ?pb,
+      Hcmp : cmp_prim op pa pb = true |- _ =>
+        pose proof (proj1 (aeval_reflection a v pa) Hra) as Ha;
+        pose proof (proj1 (aeval_reflection b v pb) Hrb) as Hb;
+        rewrite Ha, Hb;
+        exact Hcmp
+    end.
+  - simpl in H.
+    destruct (Exec.aeval a v) as [pa|] eqn:Ea; try discriminate.
+    destruct (Exec.aeval b v) as [pb|] eqn:Eb; try discriminate.
+    apply HoldsCmp with (pa:=pa) (pb:=pb).
+    + apply (proj2 (aeval_reflection a v pa)). exact Ea.
+    + apply (proj2 (aeval_reflection b v pb)). exact Eb.
+    + exact H.
+  - inversion H; subst; simpl.
+    match goal with
+    | Hra : aeval_rel a v (PStr ?s),
+      Hm : regex_match r s = true |- _ =>
+        pose proof (proj1 (aeval_reflection a v (PStr s)) Hra) as Ha;
+        rewrite Ha;
+        exact Hm
+    end.
+  - simpl in H.
+    destruct (Exec.aeval a v) as [pa|] eqn:Ea; try discriminate.
+    destruct pa as [|b0|n0|s0]; try discriminate.
+    apply HoldsMatch with (s:=s0).
+    + apply (proj2 (aeval_reflection a v (PStr s0))). exact Ea.
+    + exact H.
+  - inversion H; subst; simpl.
+    match goal with
+    | Hra : aeval_rel a v (PStr ?s),
+      Hm : regex_search r s = true |- _ =>
+        pose proof (proj1 (aeval_reflection a v (PStr s)) Hra) as Ha;
+        rewrite Ha;
+        exact Hm
+    end.
+  - simpl in H.
+    destruct (Exec.aeval a v) as [pa|] eqn:Ea; try discriminate.
+    destruct pa as [|b0|n0|s0]; try discriminate.
+    apply HoldsSearch with (s:=s0).
+    + apply (proj2 (aeval_reflection a v (PStr s0))). exact Ea.
+    + exact H.
+Qed.
+
+End DirectUnrestricted.
+
+(* ------------------------------------------------------------ *)
 (* Static well-formedness checks (conservative)                 *)
 (* ------------------------------------------------------------ *)
 
