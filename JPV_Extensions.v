@@ -944,6 +944,347 @@ Proof.
   - apply parse_query_complete.
 Qed.
 
+(* ------------------------------------------------------------ *)
+(* Extended ABNF + Parser (Full Current AST Coverage)           *)
+(* ------------------------------------------------------------ *)
+
+Inductive full_token :=
+| FTRoot
+| FTDot
+| FTDesc
+| FTLBracket
+| FTRBracket
+| FTComma
+| FTStar
+| FTQMark
+| FTName (n:ustring)
+| FTIndex (i:Z)
+| FTSlice (start end_ : option Z) (stp:Z)
+| FTFilterExpr (f:fexpr).
+
+Definition parse_full_name (u:ustring) : string :=
+  parse_name u.
+
+Inductive abnf_full_selector : list full_token -> selector -> list full_token -> Prop :=
+| ABNFFullSelName :
+    forall u rest,
+      abnf_full_selector (FTName u :: rest) (SelName (parse_full_name u)) rest
+| ABNFFullSelWildcard :
+    forall rest,
+      abnf_full_selector (FTStar :: rest) SelWildcard rest
+| ABNFFullSelIndex :
+    forall i rest,
+      abnf_full_selector (FTIndex i :: rest) (SelIndex i) rest
+| ABNFFullSelSlice :
+    forall start end_ stp rest,
+      abnf_full_selector (FTSlice start end_ stp :: rest)
+                         (SelSlice start end_ stp) rest
+| ABNFFullSelFilter :
+    forall f rest,
+      abnf_full_selector (FTQMark :: FTFilterExpr f :: rest)
+                         (SelFilter f) rest.
+
+Inductive abnf_full_selector_list
+    : list full_token -> list selector -> list full_token -> Prop :=
+| ABNFFullSelListOne :
+    forall toks sel rest,
+      abnf_full_selector toks sel rest ->
+      (forall toks', rest <> FTComma :: toks') ->
+      abnf_full_selector_list toks [sel] rest
+| ABNFFullSelListCons :
+    forall toks sel toks1 sels rest,
+      abnf_full_selector toks sel (FTComma :: toks1) ->
+      abnf_full_selector_list toks1 sels rest ->
+      abnf_full_selector_list toks (sel :: sels) rest.
+
+Inductive abnf_full_segment : list full_token -> segment -> list full_token -> Prop :=
+| ABNFFullSegDotName :
+    forall u rest,
+      abnf_full_segment (FTDot :: FTName u :: rest)
+                        (Child [SelName (parse_full_name u)]) rest
+| ABNFFullSegDotStar :
+    forall rest,
+      abnf_full_segment (FTDot :: FTStar :: rest)
+                        (Child [SelWildcard]) rest
+| ABNFFullSegBracket :
+    forall toks sels rest,
+      abnf_full_selector_list toks sels (FTRBracket :: rest) ->
+      abnf_full_segment (FTLBracket :: toks) (Child sels) rest
+| ABNFFullSegDescName :
+    forall u rest,
+      abnf_full_segment (FTDesc :: FTName u :: rest)
+                        (Desc [SelName (parse_full_name u)]) rest
+| ABNFFullSegDescStar :
+    forall rest,
+      abnf_full_segment (FTDesc :: FTStar :: rest)
+                        (Desc [SelWildcard]) rest
+| ABNFFullSegDescBracket :
+    forall toks sels rest,
+      abnf_full_selector_list toks sels (FTRBracket :: rest) ->
+      abnf_full_segment (FTDesc :: FTLBracket :: toks) (Desc sels) rest.
+
+Inductive abnf_full_segments
+    : list full_token -> list segment -> list full_token -> Prop :=
+| ABNFFullSegsNil :
+    forall toks,
+      abnf_full_segments toks [] toks
+| ABNFFullSegsCons :
+    forall toks seg rest segs final,
+      abnf_full_segment toks seg rest ->
+      abnf_full_segments rest segs final ->
+      abnf_full_segments toks (seg :: segs) final.
+
+Inductive abnf_full_query : list full_token -> query -> Prop :=
+| ABNFFullQuery :
+    forall rest segs,
+      abnf_full_segments rest segs [] ->
+      abnf_full_query (FTRoot :: rest) (Query segs).
+
+Definition parse_full_selector
+    (toks:list full_token) : option (selector * list full_token) :=
+  match toks with
+  | FTName u :: rest => Some (SelName (parse_full_name u), rest)
+  | FTStar :: rest => Some (SelWildcard, rest)
+  | FTIndex i :: rest => Some (SelIndex i, rest)
+  | FTSlice start end_ stp :: rest => Some (SelSlice start end_ stp, rest)
+  | FTQMark :: FTFilterExpr f :: rest => Some (SelFilter f, rest)
+  | _ => None
+  end.
+
+Fixpoint parse_full_selector_list_fuel
+    (fuel:nat) (toks:list full_token)
+    : option (list selector * list full_token) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match parse_full_selector toks with
+      | None => None
+      | Some (sel, rest) =>
+          match rest with
+          | FTComma :: rest' =>
+              match parse_full_selector_list_fuel fuel' rest' with
+              | Some (sels, final) => Some (sel :: sels, final)
+              | None => None
+              end
+          | _ => Some ([sel], rest)
+          end
+      end
+  end.
+
+Definition parse_full_selector_list
+    (toks:list full_token) : option (list selector * list full_token) :=
+  parse_full_selector_list_fuel (S (List.length toks)) toks.
+
+Definition parse_full_segment
+    (toks:list full_token) : option (segment * list full_token) :=
+  match toks with
+  | FTDot :: FTName u :: rest =>
+      Some (Child [SelName (parse_full_name u)], rest)
+  | FTDot :: FTStar :: rest =>
+      Some (Child [SelWildcard], rest)
+  | FTLBracket :: rest =>
+      match parse_full_selector_list rest with
+      | Some (sels, FTRBracket :: final) => Some (Child sels, final)
+      | _ => None
+      end
+  | FTDesc :: FTName u :: rest =>
+      Some (Desc [SelName (parse_full_name u)], rest)
+  | FTDesc :: FTStar :: rest =>
+      Some (Desc [SelWildcard], rest)
+  | FTDesc :: FTLBracket :: rest =>
+      match parse_full_selector_list rest with
+      | Some (sels, FTRBracket :: final) => Some (Desc sels, final)
+      | _ => None
+      end
+  | _ => None
+  end.
+
+Fixpoint parse_full_segments_fuel
+    (fuel:nat) (toks:list full_token)
+    : option (list segment * list full_token) :=
+  match fuel with
+  | O => Some ([], toks)
+  | S fuel' =>
+      match parse_full_segment toks with
+      | None => Some ([], toks)
+      | Some (seg, rest) =>
+          match parse_full_segments_fuel fuel' rest with
+          | Some (segs, final) => Some (seg :: segs, final)
+          | None => None
+          end
+      end
+  end.
+
+Definition parse_full_segments
+    (toks:list full_token) : option (list segment * list full_token) :=
+  parse_full_segments_fuel (S (List.length toks)) toks.
+
+Definition parse_full_query (toks:list full_token) : option query :=
+  match toks with
+  | FTRoot :: rest =>
+      match parse_full_segments rest with
+      | Some (segs, []) => Some (Query segs)
+      | _ => None
+      end
+  | _ => None
+  end.
+
+(* Surface parser over lexical tokens for the full current AST grammar. *)
+Definition parse_surface_query := parse_full_query.
+
+Lemma parse_full_selector_sound :
+  forall toks sel rest,
+    parse_full_selector toks = Some (sel, rest) ->
+    abnf_full_selector toks sel rest.
+Proof.
+  intros toks sel rest H.
+  destruct toks as [|t toks']; simpl in H; try discriminate.
+  destruct t; simpl in H; try discriminate;
+    try (inversion H; subst; constructor).
+  destruct toks' as [|t2 toks'']; simpl in H; try discriminate.
+  destruct t2; simpl in H; try discriminate.
+  inversion H; subst. constructor.
+Qed.
+
+Lemma parse_full_selector_list_fuel_sound :
+  forall fuel toks sels rest,
+    parse_full_selector_list_fuel fuel toks = Some (sels, rest) ->
+    abnf_full_selector_list toks sels rest.
+Proof.
+  induction fuel as [|fuel IH]; intros toks sels rest H.
+  - simpl in H. discriminate.
+  - simpl in H.
+    destruct (parse_full_selector toks) as [[sel rest1]|] eqn:Hsel; try discriminate.
+    destruct rest1 as [|t rest1'].
+    + inversion H; subst.
+      apply ABNFFullSelListOne.
+      * eapply parse_full_selector_sound; eauto.
+      * intros toks' Hcontra. discriminate Hcontra.
+    + destruct t.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * destruct (parse_full_selector_list_fuel fuel rest1') as [[sels' rest']|] eqn:Htail;
+          try discriminate.
+        inversion H; subst.
+        eapply ABNFFullSelListCons.
+        -- pose proof (parse_full_selector_sound _ _ _ Hsel) as Hs.
+           exact Hs.
+        -- eapply IH. exact Htail.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+      * inversion H; subst.
+        apply ABNFFullSelListOne.
+        -- eapply parse_full_selector_sound; eauto.
+        -- intros toks' Hcontra. inversion Hcontra.
+Qed.
+
+Lemma parse_full_segment_sound :
+  forall toks seg rest,
+    parse_full_segment toks = Some (seg, rest) ->
+    abnf_full_segment toks seg rest.
+Proof.
+  intros toks seg rest H.
+  destruct toks as [|t toks']; simpl in H; try discriminate.
+  destruct t; simpl in H; try discriminate.
+  - (* FTDot *)
+    destruct toks' as [|t1 toks1]; simpl in H; try discriminate.
+    destruct t1; simpl in H; try discriminate.
+    + inversion H; subst. constructor.
+    + inversion H; subst. constructor.
+  - (* FTDesc *)
+    destruct toks' as [|t1 toks1]; simpl in H; try discriminate.
+    destruct t1; simpl in H; try discriminate.
+    + destruct (parse_full_selector_list toks1) as [[sels final]|] eqn:Hsel; try discriminate.
+      destruct final as [|t2 final']; try discriminate.
+      destruct t2; try discriminate.
+      inversion H; subst.
+      eapply ABNFFullSegDescBracket.
+      eapply parse_full_selector_list_fuel_sound.
+      unfold parse_full_selector_list in Hsel.
+      exact Hsel.
+    + inversion H; subst. constructor.
+    + inversion H; subst. constructor.
+  - (* FTLBracket *)
+    destruct (parse_full_selector_list toks') as [[sels final]|] eqn:Hsel; try discriminate.
+    destruct final as [|t1 final']; try discriminate.
+    destruct t1; try discriminate.
+    inversion H; subst.
+    eapply ABNFFullSegBracket.
+    eapply parse_full_selector_list_fuel_sound.
+    unfold parse_full_selector_list in Hsel.
+    exact Hsel.
+Qed.
+
+Lemma parse_full_segments_fuel_sound :
+  forall fuel toks segs rest,
+    parse_full_segments_fuel fuel toks = Some (segs, rest) ->
+    abnf_full_segments toks segs rest.
+Proof.
+  induction fuel as [|fuel IH]; intros toks segs rest H.
+  - simpl in H. inversion H; subst. constructor.
+  - simpl in H.
+    destruct (parse_full_segment toks) as [[seg rest1]|] eqn:Hseg.
+    + destruct (parse_full_segments_fuel fuel rest1) as [[segs' final]|] eqn:Htail;
+        try discriminate.
+      inversion H; subst.
+      eapply ABNFFullSegsCons.
+      * eapply parse_full_segment_sound. exact Hseg.
+      * eapply IH. exact Htail.
+    + inversion H; subst. constructor.
+Qed.
+
+Theorem parse_full_query_sound :
+  forall toks q,
+    parse_full_query toks = Some q ->
+    abnf_full_query toks q.
+Proof.
+  intros toks q Hparse.
+  destruct toks as [|t rest]; simpl in Hparse; try discriminate.
+  destruct t; try discriminate.
+  destruct (parse_full_segments rest) as [[segs final]|] eqn:Hsegs; try discriminate.
+  destruct final as [|x xs]; try discriminate.
+  inversion Hparse; subst.
+  apply ABNFFullQuery.
+  unfold parse_full_segments in Hsegs.
+  eapply parse_full_segments_fuel_sound; eauto.
+Qed.
+
 End JSONPathABNF.
 
 (* ------------------------------------------------------------ *)
