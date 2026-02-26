@@ -104,6 +104,22 @@ Module API.
     then Ok (eval_exec_nf q J)
     else Error E_NotChildOnly.
 
+  Theorem eval_nf_checked_notchildonly_iff :
+    forall q J,
+      eval_nf_checked q J = Error E_NotChildOnly <->
+      query_child_only q = false.
+  Proof.
+    intros q J.
+    unfold eval_nf_checked.
+    destruct (query_child_only q) eqn:Hco.
+    - split.
+      + discriminate.
+      + discriminate.
+    - split.
+      + intro H. reflexivity.
+      + intro H. reflexivity.
+  Qed.
+
   (* Linear queries return exactly zero or one result; expose as result. *)
   Definition eval_one_linear (q:query) (J:value)
     : result node exec_error :=
@@ -114,6 +130,93 @@ Module API.
       | _   => Error E_Multiple
       end
     else Error E_NotLinear.
+
+  Theorem eval_one_linear_notlinear_iff :
+    forall q J,
+      eval_one_linear q J = Error E_NotLinear <->
+      linear_query q = false.
+  Proof.
+    intros q J.
+    unfold eval_one_linear.
+    destruct (linear_query q) eqn:Hlin.
+    - split.
+      + destruct (eval_exec_nf q J) as [|n [|n2 rest]]; discriminate.
+      + discriminate.
+    - split.
+      + intro H. reflexivity.
+      + intro H. reflexivity.
+  Qed.
+
+  Theorem eval_one_linear_notfound_iff :
+    forall q J,
+      linear_query q = true ->
+      eval_one_linear q J = Error E_NotFound <->
+      eval_exec_nf q J = [].
+  Proof.
+    intros q J Hlin.
+    unfold eval_one_linear.
+    rewrite Hlin.
+    destruct (eval_exec_nf q J) as [|n [|n2 rest]] eqn:Hnf.
+    - split.
+      + intro H. reflexivity.
+      + intro H. reflexivity.
+    - split; discriminate.
+    - split; discriminate.
+  Qed.
+
+  Theorem eval_one_linear_multiple_iff :
+    forall q J,
+      linear_query q = true ->
+      eval_one_linear q J = Error E_Multiple <->
+      exists n1 n2 rest, eval_exec_nf q J = n1 :: n2 :: rest.
+  Proof.
+    intros q J Hlin.
+    unfold eval_one_linear.
+    rewrite Hlin.
+    destruct (eval_exec_nf q J) as [|n1 [|n2 rest]] eqn:Hnf.
+    - split.
+      + discriminate.
+      + intros [x1 [x2 [xs Hx]]]. discriminate Hx.
+    - split.
+      + discriminate.
+      + intros [x1 [x2 [xs Hx]]]. discriminate Hx.
+    - split.
+      + intro H. exists n1, n2, rest. reflexivity.
+      + intro H. reflexivity.
+  Qed.
+
+  Theorem eval_one_linear_ok_iff :
+    forall q J n,
+      linear_query q = true ->
+      eval_one_linear q J = Ok n <->
+      eval_exec_nf q J = [n].
+  Proof.
+    intros q J n Hlin.
+    unfold eval_one_linear.
+    rewrite Hlin.
+    destruct (eval_exec_nf q J) as [|n1 [|n2 rest]] eqn:Hnf.
+    - split.
+      + discriminate.
+      + discriminate.
+    - split.
+      + intro H. inversion H; subst. reflexivity.
+      + intro H. inversion H; subst. reflexivity.
+    - split.
+      + discriminate.
+      + discriminate.
+  Qed.
+
+  Theorem eval_one_linear_error_exclusive :
+    forall q J e1 e2,
+      eval_one_linear q J = Error e1 ->
+      eval_one_linear q J = Error e2 ->
+      e1 = e2.
+  Proof.
+    intros q J e1 e2 H1 H2.
+    rewrite H1 in H2.
+    inversion H2.
+    reflexivity.
+  Qed.
 
   (* QoL: projections *)
   Definition values_of (ns:list node) : list value := map snd ns.
@@ -285,6 +388,22 @@ Module UnicodeAPI.
     then Ok (UnicodeExec.eval_exec_nf q J)
     else Error E_NotChildOnly.
 
+  Theorem eval_nf_checked_notchildonly_iff :
+    forall q J,
+      eval_nf_checked q J = Error E_NotChildOnly <->
+      UnicodeExec.query_child_only q = false.
+  Proof.
+    intros q J.
+    unfold eval_nf_checked.
+    destruct (UnicodeExec.query_child_only q) eqn:Hco.
+    - split.
+      + discriminate.
+      + discriminate.
+    - split.
+      + intro H. reflexivity.
+      + intro H. reflexivity.
+  Qed.
+
   Definition eval_one_linear (q:uquery) (J:uvalue)
     : result unode exec_error :=
     if UnicodeExec.linear_query q then
@@ -295,25 +414,122 @@ Module UnicodeAPI.
       end
     else Error E_NotLinear.
 
+  Theorem eval_one_linear_notlinear_iff :
+    forall q J,
+      eval_one_linear q J = Error E_NotLinear <->
+      UnicodeExec.linear_query q = false.
+  Proof.
+    intros q J.
+    unfold eval_one_linear.
+    destruct (UnicodeExec.linear_query q) eqn:Hlin.
+    - split.
+      + destruct (UnicodeExec.eval_exec_nf q J) as [|n [|n2 rest]]; discriminate.
+      + discriminate.
+    - split.
+      + intro H. reflexivity.
+      + intro H. reflexivity.
+  Qed.
+
+  Theorem eval_one_linear_notfound_iff :
+    forall q J,
+      UnicodeExec.linear_query q = true ->
+      eval_one_linear q J = Error E_NotFound <->
+      UnicodeExec.eval_exec_nf q J = [].
+  Proof.
+    intros q J Hlin.
+    unfold eval_one_linear.
+    rewrite Hlin.
+    destruct (UnicodeExec.eval_exec_nf q J) as [|n [|n2 rest]] eqn:Hnf.
+    - split.
+      + intro H. reflexivity.
+      + intro H. reflexivity.
+    - split; discriminate.
+    - split; discriminate.
+  Qed.
+
+  Theorem eval_one_linear_multiple_iff :
+    forall q J,
+      UnicodeExec.linear_query q = true ->
+      eval_one_linear q J = Error E_Multiple <->
+      exists n1 n2 rest, UnicodeExec.eval_exec_nf q J = n1 :: n2 :: rest.
+  Proof.
+    intros q J Hlin.
+    unfold eval_one_linear.
+    rewrite Hlin.
+    destruct (UnicodeExec.eval_exec_nf q J) as [|n1 [|n2 rest]] eqn:Hnf.
+    - split.
+      + discriminate.
+      + intros [x1 [x2 [xs Hx]]]. discriminate Hx.
+    - split.
+      + discriminate.
+      + intros [x1 [x2 [xs Hx]]]. discriminate Hx.
+    - split.
+      + intro H. exists n1, n2, rest. reflexivity.
+      + intro H. reflexivity.
+  Qed.
+
+  Theorem eval_one_linear_ok_iff :
+    forall q J n,
+      UnicodeExec.linear_query q = true ->
+      eval_one_linear q J = Ok n <->
+      UnicodeExec.eval_exec_nf q J = [n].
+  Proof.
+    intros q J n Hlin.
+    unfold eval_one_linear.
+    rewrite Hlin.
+    destruct (UnicodeExec.eval_exec_nf q J) as [|n1 [|n2 rest]] eqn:Hnf.
+    - split.
+      + discriminate.
+      + discriminate.
+    - split.
+      + intro H. inversion H; subst. reflexivity.
+      + intro H. inversion H; subst. reflexivity.
+    - split.
+      + discriminate.
+      + discriminate.
+  Qed.
+
+  Theorem eval_one_linear_error_exclusive :
+    forall q J e1 e2,
+      eval_one_linear q J = Error e1 ->
+      eval_one_linear q J = Error e2 ->
+      e1 = e2.
+  Proof.
+    intros q J e1 e2 H1 H2.
+    rewrite H1 in H2.
+    inversion H2.
+    reflexivity.
+  Qed.
+
   Definition values_of (ns:list unode) : list uvalue := map snd ns.
   Definition paths_of  (ns:list unode) : list upath  := map fst ns.
 
+  Fixpoint map_ascii_nodes_opt (ns:list unode) : option (list JSON.node) :=
+    match ns with
+    | [] => Some []
+    | n::ns' =>
+        match UnicodeJSON.to_ascii_node_opt n, map_ascii_nodes_opt ns' with
+        | Some n', Some ns'' => Some (n' :: ns'')
+        | _, _ => None
+        end
+    end.
+
   Definition eval_exec_ascii_bridge
-      (q:JSONPath.query) (J:JSON.value) : list JSON.node :=
-    map UnicodeJSON.to_ascii_node
-        (UnicodeExec.eval_exec
-           (UnicodeJSONPath.of_ascii_query q)
-           (UnicodeJSON.of_ascii_value J)).
+      (q:JSONPath.query) (J:JSON.value) : option (list JSON.node) :=
+    map_ascii_nodes_opt
+      (UnicodeExec.eval_exec
+         (UnicodeJSONPath.of_ascii_query q)
+         (UnicodeJSON.of_ascii_value J)).
 
   Theorem eval_exec_ascii_bridge_empty_query :
     forall J,
-      eval_exec_ascii_bridge (JSONPath.Query []) J = [([], J)].
+      eval_exec_ascii_bridge (JSONPath.Query []) J = Some [([], J)].
   Proof.
     intros J. unfold eval_exec_ascii_bridge. simpl.
-    assert (Hnode : UnicodeJSON.to_ascii_node ([], UnicodeJSON.of_ascii_value J) = ([], J)).
+    assert (Hnode : UnicodeJSON.to_ascii_node_opt ([], UnicodeJSON.of_ascii_value J) = Some ([], J)).
     {
-      unfold UnicodeJSON.to_ascii_node. simpl.
-      rewrite UnicodeJSON.to_ascii_of_ascii_value.
+      unfold UnicodeJSON.to_ascii_node_opt. simpl.
+      rewrite UnicodeJSON.to_ascii_value_opt_of_ascii.
       reflexivity.
     }
     rewrite Hnode. reflexivity.
@@ -340,6 +556,7 @@ Require Import Coq.extraction.ExtrOcamlZBigInt.
 Set Extraction KeepSingleton.
 Extraction Language OCaml.
 Extraction Blacklist String List Int Z.
+Set Extraction Output Directory ".".
 
 Extraction NoInline
   Exec.eval_exec

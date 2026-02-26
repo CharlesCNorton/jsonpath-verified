@@ -331,6 +331,104 @@ Proof.
 Qed.
 End TypingPrecise.
 
+Module TypingPrecise_Props.
+Import JSON JSONPath TypingPrecise.
+
+Definition selector_no_zero_step (sel:selector) : bool :=
+  match sel with
+  | SelSlice _ _ stp => negb (Z.eqb stp 0)
+  | _ => true
+  end.
+
+Definition segment_no_zero_step (seg:segment) : bool :=
+  match seg with
+  | Child sels | Desc sels => forallb selector_no_zero_step sels
+  end.
+
+Definition query_no_zero_step (q:query) : bool :=
+  match q with
+  | Query segs => forallb segment_no_zero_step segs
+  end.
+
+Lemma wf_selector_implies_no_zero_step :
+  forall sel,
+    wf_selector sel = true ->
+    selector_no_zero_step sel = true.
+Proof.
+  intros sel Hwf.
+  destruct sel; simpl in *; try reflexivity.
+  exact Hwf.
+Qed.
+
+Lemma wf_segment_implies_no_zero_step :
+  forall seg,
+    wf_segment seg = true ->
+    segment_no_zero_step seg = true.
+Proof.
+  intros [sels|sels] Hwf; simpl in *.
+  - induction sels as [|sel sels IH]; simpl in *; [reflexivity|].
+    apply andb_true_iff in Hwf as [Hsel Hsels].
+    apply andb_true_iff. split.
+    + apply wf_selector_implies_no_zero_step. exact Hsel.
+    + apply IH. exact Hsels.
+  - induction sels as [|sel sels IH]; simpl in *; [reflexivity|].
+    apply andb_true_iff in Hwf as [Hsel Hsels].
+    apply andb_true_iff. split.
+    + apply wf_selector_implies_no_zero_step. exact Hsel.
+    + apply IH. exact Hsels.
+Qed.
+
+Theorem wf_query_implies_no_zero_step :
+  forall q,
+    wf_query q = true ->
+    query_no_zero_step q = true.
+Proof.
+  intros [segs] Hwf; simpl in *.
+  induction segs as [|seg segs IH]; simpl in *; [reflexivity|].
+  apply andb_true_iff in Hwf as [Hseg Hsegs].
+  apply andb_true_iff. split.
+  - apply wf_segment_implies_no_zero_step. exact Hseg.
+  - apply IH. exact Hsegs.
+Qed.
+
+Theorem wf_selector_rejects_zero_step :
+  forall st en,
+    wf_selector (SelSlice st en 0) = false.
+Proof.
+  intros st en. simpl. reflexivity.
+Qed.
+
+Theorem wf_regex_rejects_bad_repeat :
+  forall r min max,
+    (max < min)%nat ->
+    wf_regex (RRepeat r min max) = false.
+Proof.
+  intros r min max Hlt.
+  simpl.
+  apply Nat.leb_gt in Hlt.
+  rewrite Hlt.
+  destruct (wf_regex r); reflexivity.
+Qed.
+
+Theorem wf_fexpr_cmp_requires_compatible_types :
+  forall op a b,
+    wf_fexpr (FCmp op a b) = true ->
+    Typing.comparable (Typing.aety a) (Typing.aety b) = true.
+Proof.
+  intros op a b Hwf.
+  simpl in Hwf.
+  apply andb_true_iff in Hwf as [_ Hrest].
+  apply andb_true_iff in Hrest as [_ Hcmp].
+  exact Hcmp.
+Qed.
+
+Theorem wf_fexpr_rejects_num_string_cmp :
+  wf_fexpr (FCmp CEq (APrim (PNum (Q_of_Z 0))) (APrim (PStr ""))) = false.
+Proof.
+  reflexivity.
+Qed.
+End TypingPrecise_Props.
+
 (* ------------------------------------------------------------ *)
 (* Typing Soundness                                             *)
 (* ------------------------------------------------------------ *)
@@ -2714,7 +2812,7 @@ Lemma length_index_zip {A} (xs : list A) :
   List.length (index_zip xs) = List.length xs.
 Proof.
   unfold index_zip.
-  rewrite combine_length, seq_length, Nat.min_id; reflexivity.
+  rewrite length_combine, length_seq, Nat.min_id; reflexivity.
 Qed.
 
 (** ** Consequences of selector-level equivalence *)
@@ -2805,7 +2903,7 @@ Corollary nf_selwildcard_object_length :
   forall p fields,
     List.length (Exec.sel_exec_nf SelWildcard (p, JObject fields))
     = List.length fields.
-Proof. intros; simpl; now rewrite map_length. Qed.
+Proof. intros; simpl; now rewrite length_map. Qed.
 
 (** Wildcard over arrays: cardinality equals number of elements. *)
 Corollary nf_selwildcard_array_length :
@@ -2813,7 +2911,7 @@ Corollary nf_selwildcard_array_length :
     List.length (Exec.sel_exec_nf SelWildcard (p, JArr xs))
     = List.length xs.
 Proof.
-  intros; simpl; rewrite map_length, length_index_zip; reflexivity.
+  intros; simpl; rewrite length_map, length_index_zip; reflexivity.
 Qed.
 
 (** Slice over arrays: cardinality equals [slice_positions] length. *)
@@ -2821,7 +2919,7 @@ Corollary nf_selslice_array_length :
   forall p xs st en stp,
     List.length (Exec.sel_exec_nf (SelSlice st en stp) (p, JArr xs))
     = List.length (slice_positions (List.length xs) st en stp).
-Proof. intros; simpl; now rewrite map_length. Qed.
+Proof. intros; simpl; now rewrite length_map. Qed.
 
 (** ** Path shape and permutation invariances *)
 
@@ -3797,7 +3895,7 @@ Proof.
   intros A lists bound Hbound.
   induction lists as [|l lists' IH]; simpl.
   - lia.
-  - rewrite app_length.
+  - rewrite length_app.
     assert (Hthis: (List.length l <= bound)%nat) by (apply Hbound; left; reflexivity).
     assert (IH': (List.length (List.concat lists') <= List.length lists' * bound)%nat).
     { apply IH. intros l' Hin. apply Hbound. right. exact Hin. }
@@ -3830,3 +3928,440 @@ Proof.
   destruct sel; simpl in Hdet; try discriminate;
     inversion Heval; subst; simpl; lia.
 Qed.
+
+(* ------------------------------------------------------------ *)
+(* Unforgiving Closure: Direct Bridges and Regression Suite     *)
+(* ------------------------------------------------------------ *)
+
+Lemma closure_sel_exec_filter_free_eq_nf :
+  forall sel n,
+    JSONPath_Equiv.selector_filter_free sel = true ->
+    Exec.sel_exec sel n = Exec.sel_exec_nf sel n.
+Proof.
+  intros sel n Hff.
+  destruct sel; simpl in Hff; try discriminate; reflexivity.
+Qed.
+
+Lemma closure_child_on_node_filter_free_eq_nf :
+  forall sels n,
+    forallb JSONPath_Equiv.selector_filter_free sels = true ->
+    Exec.child_on_node sels n = Exec.child_on_node_nf sels n.
+Proof.
+  unfold Exec.child_on_node, Exec.child_on_node_nf, Exec.child_on_node_impl.
+  induction sels as [|sel sels IH]; intros n Hff; simpl in *.
+  - reflexivity.
+  - apply andb_true_iff in Hff as [Hsel Hsels].
+    rewrite (closure_sel_exec_filter_free_eq_nf sel n Hsel).
+    rewrite (IH n Hsels).
+    reflexivity.
+Qed.
+
+Lemma closure_seg_exec_child_only_eq_nf :
+  forall seg n,
+    JSONPath_Equiv.segment_child_only seg = true ->
+    Exec.seg_exec seg n = Exec.seg_exec_nf seg n.
+Proof.
+  intros seg n Hco.
+  destruct seg as [sels|sels]; simpl in *.
+  - apply closure_child_on_node_filter_free_eq_nf; exact Hco.
+  - discriminate.
+Qed.
+
+Lemma closure_map_seg_exec_child_only_eq_nf :
+  forall seg ns,
+    JSONPath_Equiv.segment_child_only seg = true ->
+    map (Exec.seg_exec seg) ns = map (Exec.seg_exec_nf seg) ns.
+Proof.
+  intros seg ns Hco.
+  induction ns as [|n ns IH]; simpl.
+  - reflexivity.
+  - rewrite (closure_seg_exec_child_only_eq_nf seg n Hco).
+    rewrite IH.
+    reflexivity.
+Qed.
+
+Lemma closure_segs_exec_child_only_eq_nf :
+  forall segs ns,
+    forallb JSONPath_Equiv.segment_child_only segs = true ->
+    Exec.segs_exec_impl Exec.sel_exec segs ns =
+    Exec.segs_exec_impl Exec.sel_exec_nf segs ns.
+Proof.
+  induction segs as [|seg segs IH]; intros ns Hco; simpl in *.
+  - reflexivity.
+  - apply andb_true_iff in Hco as [Hseg Hsegs].
+    replace (List.concat (map (Exec.seg_exec_impl Exec.sel_exec seg) ns))
+      with (List.concat (map (Exec.seg_exec_impl Exec.sel_exec_nf seg) ns)).
+    2:{
+      assert (Hmap :
+        map (Exec.seg_exec_impl Exec.sel_exec seg) ns =
+        map (Exec.seg_exec_impl Exec.sel_exec_nf seg) ns).
+      {
+        clear Hsegs IH.
+        induction ns as [|n ns IHns]; simpl.
+        - reflexivity.
+        - pose proof (closure_seg_exec_child_only_eq_nf seg n Hseg) as Hseg_eq.
+          unfold Exec.seg_exec in Hseg_eq.
+          unfold Exec.seg_exec_nf in Hseg_eq.
+          rewrite Hseg_eq.
+          rewrite IHns.
+          reflexivity.
+      }
+      rewrite Hmap.
+      reflexivity.
+    }
+    apply IH.
+    exact Hsegs.
+Qed.
+
+Theorem closure_eval_exec_child_only_eq_nf :
+  forall q J,
+    JSONPath_Equiv.query_child_only q = true ->
+    Exec.eval_exec q J = Exec.eval_exec_nf q J.
+Proof.
+  intros [segs] J Hco. simpl in *.
+  exact (closure_segs_exec_child_only_eq_nf segs [([], J)] Hco).
+Qed.
+
+Definition closure_segment_filter_free (seg:segment) : bool :=
+  match seg with
+  | Child sels | Desc sels =>
+      forallb JSONPath_Equiv.selector_filter_free sels
+  end.
+
+Definition closure_query_filter_free (q:query) : bool :=
+  match q with
+  | Query segs => forallb closure_segment_filter_free segs
+  end.
+
+Lemma closure_seg_exec_filter_free_eq_nf :
+  forall seg n,
+    closure_segment_filter_free seg = true ->
+    Exec.seg_exec seg n = Exec.seg_exec_nf seg n.
+Proof.
+  intros seg n Hff.
+  destruct seg as [sels|sels]; simpl in *.
+  - apply closure_child_on_node_filter_free_eq_nf. exact Hff.
+  - unfold Exec.seg_exec, Exec.seg_exec_nf, Exec.seg_exec_impl.
+    f_equal.
+    apply map_ext.
+    intro vn.
+    pose proof (closure_child_on_node_filter_free_eq_nf sels vn Hff) as Hchild.
+    unfold Exec.child_on_node, Exec.child_on_node_nf in Hchild.
+    exact Hchild.
+Qed.
+
+Lemma closure_segs_exec_filter_free_eq_nf :
+  forall segs ns,
+    forallb closure_segment_filter_free segs = true ->
+    Exec.segs_exec_impl Exec.sel_exec segs ns =
+    Exec.segs_exec_impl Exec.sel_exec_nf segs ns.
+Proof.
+  induction segs as [|seg segs IH]; intros ns Hff; simpl in *.
+  - reflexivity.
+  - apply andb_true_iff in Hff as [Hseg Hsegs].
+    replace (List.concat (map (Exec.seg_exec_impl Exec.sel_exec seg) ns))
+      with (List.concat (map (Exec.seg_exec_impl Exec.sel_exec_nf seg) ns)).
+    2:{
+      induction ns as [|n ns IHns]; simpl.
+      - reflexivity.
+      - pose proof (closure_seg_exec_filter_free_eq_nf seg n Hseg) as Hseg_eq.
+        unfold Exec.seg_exec in Hseg_eq.
+        unfold Exec.seg_exec_nf in Hseg_eq.
+        rewrite Hseg_eq.
+        rewrite IHns.
+        reflexivity.
+    }
+    apply IH.
+    exact Hsegs.
+Qed.
+
+Theorem closure_eval_exec_filter_free_eq_nf :
+  forall q J,
+    closure_query_filter_free q = true ->
+    Exec.eval_exec q J = Exec.eval_exec_nf q J.
+Proof.
+  intros [segs] J Hff. simpl in *.
+  exact (closure_segs_exec_filter_free_eq_nf segs [([], J)] Hff).
+Qed.
+
+Lemma closure_seg_exec_nf_sound_filter_free :
+  forall seg n,
+    closure_segment_filter_free seg = true ->
+    eval_seg seg n (Exec.seg_exec_nf seg n).
+Proof.
+  intros seg n Hff.
+  destruct seg as [sels|sels]; simpl in *.
+  - apply seg_exec_nf_sound_child. exact Hff.
+  - unfold Exec.seg_exec_nf, Exec.seg_exec_impl.
+    set (visited := Exec.visit_df_node n).
+    set (per_results := map (Exec.seg_exec_nf (Child sels)) visited).
+    eapply EvalSegDesc with (visited:=visited) (per_results:=per_results).
+    + subst visited. apply visit_df_node_sound.
+    + subst visited per_results.
+      induction (Exec.visit_df_node n) as [|vn visited IH]; simpl.
+      * constructor.
+      * constructor.
+        -- apply seg_exec_nf_sound_child. exact Hff.
+        -- exact IH.
+    + reflexivity.
+Qed.
+
+Lemma closure_forall2_eval_seg_sound_filter_free :
+  forall seg ns,
+    closure_segment_filter_free seg = true ->
+    Forall2 (fun n res => eval_seg seg n res) ns (map (Exec.seg_exec_nf seg) ns).
+Proof.
+  intros seg ns Hseg.
+  induction ns as [|n ns IH]; simpl.
+  - constructor.
+  - constructor.
+    + apply closure_seg_exec_nf_sound_filter_free. exact Hseg.
+    + exact IH.
+Qed.
+
+Lemma closure_eval_rest_on_nodes_nf_sound_filter_free :
+  forall segs ns,
+    forallb closure_segment_filter_free segs = true ->
+    eval_rest_on_nodes segs ns (Exec.segs_exec_nf segs ns).
+Proof.
+  intros segs ns Hff.
+  revert ns; induction segs as [|seg segs IH]; intros ns; simpl in *.
+  - constructor.
+  - apply andb_true_iff in Hff as [Hseg Hsegs].
+    unfold Exec.segs_exec_nf, Exec.segs_exec_impl.
+    fold (Exec.segs_exec_impl Exec.sel_exec_nf).
+    fold Exec.segs_exec_nf.
+    eapply EvalRestCons.
+    + exists (map (Exec.seg_exec_nf seg) ns).
+      split.
+      * apply closure_forall2_eval_seg_sound_filter_free. exact Hseg.
+      * reflexivity.
+    + apply IH. exact Hsegs.
+Qed.
+
+Theorem closure_direct_eval_exec_filter_free_sound :
+  forall q J,
+    closure_query_filter_free q = true ->
+    eval q J (Exec.eval_exec q J).
+Proof.
+  intros [segs] J Hff. simpl in *.
+  unfold Exec.eval_exec, Exec.eval_exec_impl.
+  constructor.
+  change
+    (eval_rest_on_nodes segs [([], J)]
+       (Exec.segs_exec_impl Exec.sel_exec segs [([], J)])).
+  rewrite (closure_segs_exec_filter_free_eq_nf segs [([], J)] Hff).
+  apply closure_eval_rest_on_nodes_nf_sound_filter_free.
+  exact Hff.
+Qed.
+
+Theorem closure_direct_eval_exec_linear_exact :
+  forall q J res,
+    linear_query q = true ->
+    (eval q J res <-> res = Exec.eval_exec q J).
+Proof.
+  intros q J res Hlin.
+  pose proof (linear_query_relational_executable_bridge q J res Hlin) as Hbridge.
+  pose proof (linear_query_implies_child_only q Hlin) as Hco.
+  pose proof (closure_eval_exec_child_only_eq_nf q J Hco) as Heq.
+  split.
+  - intro Hev.
+    apply Hbridge in Hev.
+    rewrite <- Heq in Hev.
+    symmetry; exact Hev.
+  - intro Hexec.
+    apply Hbridge.
+    rewrite <- Heq.
+    symmetry; exact Hexec.
+Qed.
+
+Theorem closure_direct_eval_exec_child_only_permutation :
+  forall q J res,
+    JSONPath_Equiv.query_child_only q = true ->
+    eval q J res ->
+    Permutation res (Exec.eval_exec q J).
+Proof.
+  intros q J res Hco Hev.
+  pose proof (child_only_end_to_end_equiv q J res Hco Hev) as Hperm_nf.
+  pose proof (closure_eval_exec_child_only_eq_nf q J Hco) as Heq.
+  rewrite <- Heq in Hperm_nf.
+  exact Hperm_nf.
+Qed.
+
+Theorem closure_direct_eval_paths_linear_exact :
+  forall q J res,
+    linear_query q = true ->
+    eval q J res ->
+    map fst res = map fst (Exec.eval_exec q J).
+Proof.
+  intros q J res Hlin Hev.
+  pose proof (closure_direct_eval_exec_linear_exact q J res Hlin) as H.
+  apply H in Hev.
+  subst. reflexivity.
+Qed.
+
+Theorem closure_direct_eval_values_linear_exact :
+  forall q J res,
+    linear_query q = true ->
+    eval q J res ->
+    map snd res = map snd (Exec.eval_exec q J).
+Proof.
+  intros q J res Hlin Hev.
+  pose proof (closure_direct_eval_exec_linear_exact q J res Hlin) as H.
+  apply H in Hev.
+  subst. reflexivity.
+Qed.
+
+Theorem closure_direct_aeval_aprim_reflection :
+  forall p v p',
+    aeval_rel (APrim p) v p' <->
+    Exec.aeval (APrim p) v = Some p'.
+Proof.
+  intros p v p'.
+  split.
+  - intro H.
+    inversion H; subst.
+    simpl. reflexivity.
+  - intro H.
+    simpl in H.
+    inversion H; subst.
+    constructor.
+Qed.
+
+Theorem closure_direct_aeval_acount_reflection_child_only :
+  forall q v p,
+    JSONPath_Equiv.query_child_only q = true ->
+    (aeval_rel (ACount q) v p <-> Exec.aeval (ACount q) v = Some p).
+Proof.
+  intros q v p Hco.
+  split.
+  - intro Hrel.
+    inversion Hrel; subst; clear Hrel.
+    simpl.
+    pose proof (child_only_end_to_end_equiv q v res Hco H0) as Hperm.
+    pose proof (Permutation_length Hperm) as Hlen.
+    unfold Exec.eval_exec_nf in Hlen.
+    pose proof (closure_eval_exec_child_only_eq_nf q v Hco) as Heq.
+    unfold Exec.eval_exec, Exec.eval_exec_nf in Heq.
+    rewrite Heq.
+    rewrite <- Hlen.
+    reflexivity.
+  - intro Hexec.
+    simpl in Hexec.
+    inversion Hexec; subst p; clear Hexec.
+    constructor.
+    pose proof (closure_eval_exec_child_only_eq_nf q v Hco) as Heq.
+    unfold Exec.eval_exec, Exec.eval_exec_nf in Heq.
+    rewrite Heq.
+    apply eval_exec_nf_sound.
+    exact Hco.
+Qed.
+
+Theorem closure_direct_holds_true_reflection :
+  forall n,
+    holds FTrue n <-> Exec.holds_b FTrue n = true.
+Proof.
+  intro n.
+  split.
+  - intro H.
+    destruct n as [p v]. reflexivity.
+  - intro H. constructor.
+Qed.
+
+Theorem closure_direct_holds_exists_reflection_child_only :
+  forall q n,
+    JSONPath_Equiv.query_child_only q = true ->
+    (holds (FExists q) n <-> Exec.holds_b (FExists q) n = true).
+Proof.
+  intros q [p vn] Hco.
+  split.
+  - intro Hholds.
+    inversion Hholds; subst; clear Hholds.
+    inversion H0; subst; clear H0.
+    simpl.
+    apply negb_true_iff.
+    apply Nat.eqb_neq.
+    intro Heq0.
+    apply H2.
+    lazymatch type of H1 with
+    | eval _ ?Jrel _ =>
+        pose proof (child_only_end_to_end_equiv q Jrel res Hco H1) as Hperm;
+        pose proof (Permutation_length Hperm) as Hlen;
+        unfold Exec.eval_exec_nf in Hlen;
+        pose proof (closure_eval_exec_child_only_eq_nf q Jrel Hco) as Heqexec;
+        unfold Exec.eval_exec, Exec.eval_exec_nf in Heqexec;
+        rewrite Heqexec in Heq0;
+        rewrite Heq0 in Hlen;
+        apply length_zero_iff_nil in Hlen;
+        exact Hlen
+    end.
+  - intro Hbool.
+    simpl in Hbool.
+    apply negb_true_iff in Hbool.
+    apply Nat.eqb_neq in Hbool.
+    eapply HoldsExists with (v:=vn) (res:=Exec.eval_exec q vn).
+    + reflexivity.
+    + rewrite (closure_eval_exec_child_only_eq_nf q vn Hco).
+      apply eval_exec_nf_sound.
+      exact Hco.
+    + intro Hnil.
+      apply Hbool.
+      unfold Exec.eval_exec in Hnil.
+      rewrite Hnil.
+      reflexivity.
+Qed.
+
+Theorem closure_direct_holds_cmp_aprim_reflection :
+  forall op p1 p2 n,
+    holds (FCmp op (APrim p1) (APrim p2)) n <->
+    Exec.holds_b (FCmp op (APrim p1) (APrim p2)) n = true.
+Proof.
+  intros op p1 p2 [p v].
+  split.
+  - intro Hholds.
+    inversion Hholds; subst; clear Hholds; try discriminate.
+    repeat match goal with
+    | H : aeval_rel (APrim _) _ _ |- _ =>
+        inversion H; subst; clear H
+    end.
+    simpl.
+    match goal with
+    | Hcmp : cmp_prim _ _ _ = true |- _ => exact Hcmp
+    end.
+  - intro Hbool.
+    simpl in Hbool.
+    eapply HoldsCmp with (v:=v) (pa:=p1) (pb:=p2).
+    + reflexivity.
+    + constructor.
+    + constructor.
+    + exact Hbool.
+Qed.
+
+Example closure_regression_negative_index :
+  Exec.eval_exec (Query [Child [SelIndex (-1)]])
+    (JArr [JQ 10; JQ 20; JQ 30]) =
+  [([SIndex 2], JQ 30)].
+Proof. reflexivity. Qed.
+
+Example closure_regression_slice_forward :
+  Exec.eval_exec (Query [Child [SelSlice (Some 1) (Some 3) 1]])
+    (JArr [JQ 0; JQ 1; JQ 2; JQ 3]) =
+  [([SIndex 1], JQ 1); ([SIndex 2], JQ 2)].
+Proof. reflexivity. Qed.
+
+Example closure_regression_slice_zero_step :
+  Exec.eval_exec (Query [Child [SelSlice None None 0]])
+    (JArr [JQ 0; JQ 1; JQ 2]) = [].
+Proof. reflexivity. Qed.
+
+Example closure_regression_mixed_type_cmp_false :
+  Exec.holds_b
+    (FCmp CEq (APrim (PNum (Q_of_Z 1))) (APrim (PStr "1")))
+    ([], JNull) = false.
+Proof. reflexivity. Qed.
+
+Example closure_regression_regex_search :
+  Exec.holds_b
+    (FSearch (APrim (PStr "hello")) (RChr "e"%char))
+    ([], JNull) = true.
+Proof. reflexivity. Qed.

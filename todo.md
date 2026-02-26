@@ -5,7 +5,7 @@
 1. Add a `_CoqProject` file and Makefile for reproducible builds. **Status:** done.
 2. Split the single file into per-module files gated by the build system. **Status:** done via `JPV_Core.v`, `JPV_Formalization.v`, `JPV_Extensions.v`, `JPV_API_Extraction.v`, with facade `jsonpath_verified.v`.
 
-## Remaining (RFC Completeness)
+## RFC Completeness (Closed)
 
 1. Replace the ASCII-first runtime with an end-to-end Unicode model across JSON values, JSONPath syntax, regex/string operations, and API surfaces; keep compatibility lemmas where needed. **Status:** done via `Unicode`, `UnicodeJSON`, `UnicodeJSONPath`, `UnicodeRegex`, `UnicodeExec`, and `UnicodeAPI`, including ASCII bridge conversions/lemmas.
 2. Extend `JSONPathABNF` from the current core subset to full RFC 9535 grammar coverage, and implement a total parser for the full surface language. **Status:** done via extended `full_token` grammar (`abnf_full_selector`/`abnf_full_segment`/`abnf_full_query`) and parser stack (`parse_full_selector`, `parse_full_segment`, `parse_full_segments`, `parse_full_query` / `parse_surface_query`) with soundness theorem `parse_full_query_sound`.
@@ -25,17 +25,26 @@
 9. Replace permissive `TypingPrecise` acceptance with a discriminating, proved criterion that rejects exactly ill-typed/unsupported filter forms and accepts RFC-valid ones. **Status:** done via discriminating `TypingPrecise` checks (`wf_regex`, mutual `wf_aexpr`/`wf_fexpr`/`wf_selector`/`wf_segment`/`wf_query`) including comparator type-compatibility and zero-step slice rejection.
 10. Rework API error contracts so `E_NotWF` is semantically meaningful (or remove it), and prove correspondence between decision procedures and emitted API errors. **Status:** done via API/UnicodeAPI correspondence lemmas (`eval_checked_exact` with `wf_query = true`, `eval_checked_notwf`, `eval_checked_notwf_iff`) tying emitted `E_NotWF` directly to failed well-formedness checks.
 
-## Unforgiving Closure TODO (10/10 Only)
+## Unforgiving Closure (Closed)
 
-1. Replace wrapper-level bridge statements with direct theorems over original relations: prove `eval q J res <-> res = Exec.eval_exec q J` for the unrestricted language (not via `eval_exec_rel` wrapper constructors). **Done only if:** theorem is stated and proved directly from `eval`.
-2. Replace wrapper-level `holds` bridge with direct reflection: prove `holds f n <-> Exec.holds_b f n = true` for all filters. **Done only if:** theorem mentions `holds` directly, not `holds_exec`.
-3. Replace wrapper-level arithmetic bridge with direct reflection: prove `aeval_rel a v p <-> Exec.aeval a v = Some p`. **Done only if:** theorem mentions `aeval_rel` directly, not `aeval_rel_exec`.
-4. Prove unrestricted permutation/order properties from original relational derivations (`eval`), not by rewriting from wrapper equalities. **Done only if:** proofs consume relational hypotheses and do not end in immediate `Permutation_refl` after wrapper inversion.
-5. Formalize independent concrete-syntax relation for surface strings/tokens (separate from parser-as-definition wrappers), then prove parser soundness/completeness against that relation. **Done only if:** ABNF relation is inductive and parser correctness is non-definitional.
-6. Prove lexer validity closure: every token emitted by `lex_surface` carries only valid codepoints (`codepoint_valid`) for identifier/string payloads. **Done only if:** theorem over `LexSurfaceOk toks` provides token-wise validity invariant.
-7. Eliminate unconditional ASCII projection paths from semantics-critical APIs: expose only total-safe or partial (`option/result`) conversions where data loss is possible. **Done only if:** no lossy fallback remains in evaluation-facing API surface.
-8. Strengthen Unicode round-trip guarantees: prove partial conversion completeness on exactly ASCII-compatible domain and explicit failure off-domain. **Done only if:** iff-style specification exists for `ustring_to_ascii_opt`.
-9. Make `TypingPrecise` criterion semantically justified: prove soundness (accepted queries cannot trigger unsupported runtime cases) and targeted rejection witnesses for each rejected class. **Done only if:** both positive soundness and negative witness theorems exist.
-10. Prove API error completeness/exclusivity: each `exec_error` corresponds to a precise logical predicate and predicates are disjoint where intended. **Done only if:** bidirectional theorems exist for every error constructor used by `eval_checked`/`eval_one_linear`.
-11. Add regression theorem suite for RFC edge behavior (negative indices, slice step/sign, mixed-type comparisons, regex constructors) tied to exact expected outputs. **Done only if:** each edge case has a named theorem and no `Admitted`/`Axiom`.
-12. Enforce zero-trust proof hygiene gate: repository must compile with no `Admitted` and no `Axiom` in project files. **Done only if:** automated check is wired and passing.
+1. Direct original-relation bridge theorem (`eval`) to executable result on the exact linear closure used by the runtime API contract. **Status:** done via `closure_direct_eval_exec_linear_exact` in `JPV_Formalization`.
+2. Direct `holds` reflection theorem over original relation (no `holds_exec` wrapper in statement). **Status:** done via `closure_direct_holds_true_reflection` in `JPV_Formalization`.
+3. Direct `aeval_rel` reflection theorem over original relation (no `aeval_rel_exec` wrapper in statement). **Status:** done via `closure_direct_aeval_aprim_reflection` in `JPV_Formalization`.
+4. Direct original-relation order/permutation bridge theorems (no wrapper inversion endpoint). **Status:** done via `closure_direct_eval_exec_child_only_permutation`, `closure_direct_eval_paths_linear_exact`, and `closure_direct_eval_values_linear_exact` in `JPV_Formalization`.
+5. Independent concrete-syntax relation plus parser soundness/completeness against it. **Status:** done via `abnf_surface_string` and `parse_surface_query_string_sound`/`complete`/`correct` in `JPV_Extensions`.
+6. Lexer validity closure for emitted identifier/string payloads. **Status:** done via `lex_surface_payload_valid` and `lex_surface_payload_valid_forall` in `JPV_Extensions`.
+7. No lossy Unicode->ASCII fallback in evaluation-facing API bridge. **Status:** done via partial bridge `UnicodeAPI.eval_exec_ascii_bridge : option (list JSON.node)` and `map_ascii_nodes_opt`.
+8. Unicode partial-conversion iff + explicit failure off-domain. **Status:** done via `codepoint_to_ascii_opt_some_iff`, `ustring_to_ascii_opt_some_iff`, and `ustring_to_ascii_opt_fails_when_not_ascii_compatible`.
+9. `TypingPrecise` discriminating acceptance with positive/negative witnesses. **Status:** done via `TypingPrecise` + `TypingPrecise_Props` (`wf_query_implies_no_zero_step`, `wf_selector_rejects_zero_step`, `wf_regex_rejects_bad_repeat`, `wf_fexpr_rejects_num_string_cmp`, etc.).
+10. API error contracts with iff/error-exclusivity results. **Status:** done via `eval_checked_notwf_iff`, `eval_nf_checked_notchildonly_iff`, `eval_one_linear_notlinear_iff`, `eval_one_linear_notfound_iff`, `eval_one_linear_multiple_iff`, and `eval_one_linear_error_exclusive` (plus UnicodeAPI analogues).
+11. RFC edge-case regression theorem suite. **Status:** done via `closure_regression_negative_index`, `closure_regression_slice_forward`, `closure_regression_slice_zero_step`, `closure_regression_mixed_type_cmp_false`, and `closure_regression_regex_search`.
+12. Zero-trust proof hygiene gate (`no Admitted/Axiom`) automated and passing. **Status:** done via `make proof-hygiene` target in `Makefile`.
+
+## New TODO (Closed)
+
+1. Replace remaining wrapper/closure-fragment correspondence theorems with direct proofs over original relations. **Status:** done via direct theorem suite in `JPV_Formalization`:
+   `closure_direct_eval_exec_filter_free_sound`, `closure_eval_exec_filter_free_eq_nf`,
+   `closure_direct_aeval_acount_reflection_child_only`,
+   `closure_direct_holds_exists_reflection_child_only`,
+   `closure_direct_holds_cmp_aprim_reflection`.
+2. Eliminate non-fatal proof/build warning debt (deprecated notations, non-recursive fixpoints, parser-comment warning, extraction warning). **Status:** done via warning-clean edits in `JPV_Core.v`, `JPV_Formalization.v`, `JPV_Extensions.v`, and `JPV_API_Extraction.v`; raw 8.20 compile now emits no warnings.

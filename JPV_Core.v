@@ -9,10 +9,10 @@
 (*     The development uses only the Coq standard library and supports        *)
 (*     OCaml extraction.                                                      *)
 (*                                                                            *)
-(*     "The name of the song is called 'Haddocks' Eyes.'"                     *)
-(*     "Oh, that's the name of the song, is it?" Alice said.                  *)
-(*     "No, you don't understand," the Knight said. "That's what the          *)
-(*      name is called. The name really is 'The Aged Aged Man.'"              *)
+(*     The name of the song is called 'Haddocks' Eyes.                        *)
+(*     Oh, that's the name of the song, is it? Alice said.                    *)
+(*     No, you don't understand, the Knight said. That's what the             *)
+(*      name is called. The name really is 'The Aged Aged Man.'               *)
 (*                                              - Lewis Carroll, 1871         *)
 (*                                                                            *)
 (*     Author: Charles C. Norton                                              *)
@@ -1862,7 +1862,7 @@ Module Exec.
 Import JSON JSONPath Regex.
 
 (** Filter-free selector evaluator (no SelFilter support). *)
-Fixpoint sel_exec_nf (sel:selector) (n:JSON.node) : list JSON.node :=
+Definition sel_exec_nf (sel:selector) (n:JSON.node) : list JSON.node :=
   match n with
   | (p, v) =>
     match sel, v with
@@ -2288,4 +2288,3 @@ Proof.
   - apply aeval_exec_complete.
   - apply aeval_exec_sound.
 Qed.
-

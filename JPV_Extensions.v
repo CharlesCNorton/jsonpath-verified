@@ -268,6 +268,67 @@ Proof.
   apply ascii_roundtrip.
 Qed.
 
+Definition ascii_compatible_ustring (u:ustring) : Prop :=
+  Forall (fun cp => codepoint_ascii_compatible cp = true) u.
+
+Lemma codepoint_to_ascii_opt_some_iff :
+  forall cp,
+    (exists a, codepoint_to_ascii_opt cp = Some a) <->
+    codepoint_ascii_compatible cp = true.
+Proof.
+  intro cp.
+  unfold codepoint_to_ascii_opt.
+  destruct (codepoint_ascii_compatible cp) eqn:Hc.
+  - split.
+    + intro H. reflexivity.
+    + intro H. exists (ascii_of_nat (Z.to_nat cp)). reflexivity.
+  - split.
+    + intros [a Ha]. discriminate Ha.
+    + intro H. discriminate H.
+Qed.
+
+Theorem ustring_to_ascii_opt_some_iff :
+  forall u,
+    (exists s, ustring_to_ascii_opt u = Some s) <->
+    ascii_compatible_ustring u.
+Proof.
+  induction u as [|cp u IHu]; simpl.
+  - split.
+    + intro H. constructor.
+    + intro H. exists EmptyString. reflexivity.
+  - split.
+    + intros [s Hs].
+      destruct (codepoint_to_ascii_opt cp) as [a|] eqn:Hcp; try discriminate.
+      destruct (ustring_to_ascii_opt u) as [s'|] eqn:Hu; try discriminate.
+      inversion Hs; subst s; clear Hs.
+      constructor.
+      * apply (proj1 (codepoint_to_ascii_opt_some_iff cp)).
+        exists a. exact Hcp.
+      * apply (proj1 IHu).
+        exists s'. reflexivity.
+    + intro Hvalid.
+      inversion Hvalid as [|cp' u' Hcp Huvalid]; subst.
+      pose proof (proj2 (codepoint_to_ascii_opt_some_iff cp) Hcp) as [a Ha].
+      pose proof (proj2 IHu Huvalid) as [s' Hs'].
+      rewrite Ha, Hs'.
+      exists (String a s').
+      reflexivity.
+Qed.
+
+Corollary ustring_to_ascii_opt_fails_when_not_ascii_compatible :
+  forall u,
+    (exists cp, In cp u /\ codepoint_ascii_compatible cp = false) ->
+    ustring_to_ascii_opt u = None.
+Proof.
+  intros u [cp [Hin Hbad]].
+  destruct (ustring_to_ascii_opt u) as [s|] eqn:Hopt; [|reflexivity].
+  exfalso.
+  pose proof (proj1 (ustring_to_ascii_opt_some_iff u) (ex_intro _ s Hopt)) as Hcompat.
+  apply Forall_forall with (x:=cp) in Hcompat; [|exact Hin].
+  rewrite Hbad in Hcompat.
+  discriminate Hcompat.
+Qed.
+
 End Unicode.
 
 Module UnicodeJSON.
@@ -926,7 +987,7 @@ Definition cmp_uprim (op:ucmp) (x y:uprim) : bool :=
   | UCGe => orb (uprim_lt y x) (uprim_eq x y)
   end.
 
-Fixpoint sel_exec_nf (sel:uselector) (n:unode) : list unode :=
+Definition sel_exec_nf (sel:uselector) (n:unode) : list unode :=
   match n with
   | (p, v) =>
       match sel, v with
@@ -1848,6 +1909,18 @@ Fixpoint lex_string_body
       end
   end.
 
+Fixpoint first_invalid_codepoint (u:ustring) : option (nat * codepoint) :=
+  match u with
+  | [] => None
+  | c::u' =>
+      if codepoint_valid c then
+        match first_invalid_codepoint u' with
+        | Some (k, bad) => Some (S k, bad)
+        | None => None
+        end
+      else Some (0%nat, c)
+  end.
+
 Definition surface_keyword_or_name (u:ustring) : surface_token :=
   let s := parse_name u in
   if string_eqb s "true" then STKwTrue else
@@ -1921,8 +1994,16 @@ Fixpoint lex_surface_aux (fuel:nat) (pos:nat) (cs:ustring)
           else if cp_eq c 34 then (* quoted string *)
             match lex_string_body fuel' (S pos) [] rest with
             | Some (s, rem, consumed) =>
-                lex_surface_prepend (STString s)
-                  (lex_surface_aux fuel' (pos + 1 + consumed)%nat rem)
+                match first_invalid_codepoint s with
+                | Some (k, bad) =>
+                    LexSurfaceError
+                      {| lex_err_pos := (pos + 1 + k)%nat;
+                         lex_err_kind := LexInvalidCodepoint;
+                         lex_err_char := Some bad |}
+                | None =>
+                    lex_surface_prepend (STString s)
+                      (lex_surface_aux fuel' (pos + 1 + consumed)%nat rem)
+                end
             | None =>
                 LexSurfaceError
                   {| lex_err_pos := pos;
@@ -1958,9 +2039,17 @@ Fixpoint lex_surface_aux (fuel:nat) (pos:nat) (cs:ustring)
           else if cp_is_ident_start c then
             let '(ident, rem, consumed) :=
                 take_while_cp fuel' cp_is_ident_continue cs in
-            let tok := surface_keyword_or_name ident in
-            lex_surface_prepend tok
-              (lex_surface_aux fuel' (pos + consumed)%nat rem)
+            match first_invalid_codepoint ident with
+            | Some (k, bad) =>
+                LexSurfaceError
+                  {| lex_err_pos := (pos + k)%nat;
+                     lex_err_kind := LexInvalidCodepoint;
+                     lex_err_char := Some bad |}
+            | None =>
+                let tok := surface_keyword_or_name ident in
+                lex_surface_prepend tok
+                  (lex_surface_aux fuel' (pos + consumed)%nat rem)
+            end
           else
             LexSurfaceError
               {| lex_err_pos := pos;
@@ -1971,6 +2060,224 @@ Fixpoint lex_surface_aux (fuel:nat) (pos:nat) (cs:ustring)
 
 Definition lex_surface (s:ustring) : lex_surface_result :=
   lex_surface_aux (S (List.length s)) 0 s.
+
+Definition surface_token_payload_validb (t:surface_token) : bool :=
+  match t with
+  | STName n => ustring_validb n
+  | STString s => ustring_validb s
+  | _ => true
+  end.
+
+Definition surface_token_payload_valid (t:surface_token) : Prop :=
+  match t with
+  | STName n => valid_ustring n
+  | STString s => valid_ustring s
+  | _ => True
+  end.
+
+Lemma first_invalid_codepoint_none_validb :
+  forall u,
+    first_invalid_codepoint u = None ->
+    ustring_validb u = true.
+Proof.
+  induction u as [|c u IH]; intro H; simpl in *.
+  - reflexivity.
+  - destruct (codepoint_valid c) eqn:Hc; try discriminate.
+    destruct (first_invalid_codepoint u) as [[k bad]|] eqn:Hu; try discriminate.
+    simpl.
+    specialize (IH eq_refl).
+    rewrite IH.
+    reflexivity.
+Qed.
+
+Lemma surface_keyword_or_name_payload_validb :
+  forall u,
+    ustring_validb u = true ->
+    surface_token_payload_validb (surface_keyword_or_name u) = true.
+Proof.
+  intros u Hu.
+  unfold surface_keyword_or_name.
+  destruct (string_eqb (parse_name u) "true") eqn:E1; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "false") eqn:E2; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "null") eqn:E3; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "not") eqn:E4; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "and") eqn:E5; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "or") eqn:E6; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "exists") eqn:E7; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "cmp") eqn:E8; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "match") eqn:E9; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "search") eqn:E10; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "count") eqn:E11; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "value") eqn:E12; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "length") eqn:E13; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "eq") eqn:E14; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "ne") eqn:E15; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "lt") eqn:E16; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "le") eqn:E17; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "gt") eqn:E18; simpl; try reflexivity.
+  destruct (string_eqb (parse_name u) "ge") eqn:E19; simpl; try reflexivity.
+  exact Hu.
+Qed.
+
+Lemma lex_surface_aux_payload_valid :
+  forall fuel pos cs toks,
+    lex_surface_aux fuel pos cs = LexSurfaceOk toks ->
+    forallb surface_token_payload_validb toks = true.
+Proof.
+  induction fuel as [|fuel IH]; intros pos cs toks Hlex; simpl in Hlex.
+  - discriminate.
+  - destruct cs as [|c rest].
+    + inversion Hlex; subst. reflexivity.
+    + destruct (negb (codepoint_valid c)) eqn:Hbad; try discriminate.
+      destruct (cp_is_space c) eqn:Hspace.
+      * eapply IH. exact Hlex.
+      * destruct (cp_eq c 36) eqn:Hdollar.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 46) eqn:Hdot.
+        { destruct rest as [|c2 rest2].
+          - destruct (lex_surface_aux fuel (S pos) []) eqn:Hrec;
+              simpl in Hlex; try discriminate.
+            inversion Hlex; subst; clear Hlex.
+            simpl. rewrite (IH _ _ _ Hrec). reflexivity.
+          - destruct (cp_eq c2 46) eqn:Hdesc.
+            + destruct (lex_surface_aux fuel (pos + 2)%nat rest2) eqn:Hrec;
+                simpl in Hlex; try discriminate.
+              inversion Hlex; subst; clear Hlex.
+              simpl. rewrite (IH _ _ _ Hrec). reflexivity.
+            + destruct (lex_surface_aux fuel (S pos) (c2 :: rest2)) eqn:Hrec;
+                simpl in Hlex; try discriminate.
+              inversion Hlex; subst; clear Hlex.
+              simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 91) eqn:Hlbr.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 93) eqn:Hrbr.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 44) eqn:Hcomma.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 42) eqn:Hstar.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 63) eqn:Hqmark.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 40) eqn:Hlpar.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 41) eqn:Hrpar.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 58) eqn:Hcolon.
+        { destruct (lex_surface_aux fuel (S pos) rest) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_eq c 34) eqn:Hquote.
+        { destruct (lex_string_body fuel (S pos) [] rest) as [sr|] eqn:Hstr.
+          - destruct sr as [[s rem] consumed].
+            destruct (first_invalid_codepoint s) as [[k bad]|] eqn:Hinv; try discriminate.
+            destruct (lex_surface_aux fuel (pos + 1 + consumed)%nat rem) eqn:Hrec;
+              simpl in Hlex; try discriminate.
+            inversion Hlex; subst; clear Hlex.
+            simpl.
+            rewrite (first_invalid_codepoint_none_validb s Hinv).
+            rewrite (IH _ _ _ Hrec).
+            reflexivity.
+          - discriminate. }
+        destruct (cp_eq c 45) eqn:Hminus.
+        { destruct rest as [|d rest'].
+          - discriminate.
+          - destruct (cp_is_digit d) eqn:Hdig.
+            + destruct (take_while_cp fuel cp_is_digit (d :: rest')) as [[digits rem] consumed] eqn:Htake.
+              destruct (lex_surface_aux fuel (pos + 1 + consumed)%nat rem) eqn:Hrec;
+                simpl in Hlex; try discriminate.
+              inversion Hlex; subst; clear Hlex.
+              simpl. rewrite (IH _ _ _ Hrec). reflexivity.
+            + discriminate. }
+        destruct (cp_is_digit c) eqn:Hisdig.
+        { destruct (take_while_cp fuel cp_is_digit (c :: rest)) as [[digits rem] consumed] eqn:Htake.
+          destruct (lex_surface_aux fuel (pos + consumed)%nat rem) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl. rewrite (IH _ _ _ Hrec). reflexivity. }
+        destruct (cp_is_ident_start c) eqn:Hident.
+        { destruct (take_while_cp fuel cp_is_ident_continue (c :: rest)) as [[ident rem] consumed] eqn:Htake.
+          destruct (first_invalid_codepoint ident) as [[k bad]|] eqn:Hinv; try discriminate.
+          destruct (lex_surface_aux fuel (pos + consumed)%nat rem) eqn:Hrec;
+            simpl in Hlex; try discriminate.
+          inversion Hlex; subst; clear Hlex.
+          simpl.
+          rewrite (surface_keyword_or_name_payload_validb ident
+                     (first_invalid_codepoint_none_validb ident Hinv)).
+          rewrite (IH _ _ _ Hrec).
+          reflexivity. }
+        discriminate.
+Qed.
+
+Theorem lex_surface_payload_valid :
+  forall s toks,
+    lex_surface s = LexSurfaceOk toks ->
+    forallb surface_token_payload_validb toks = true.
+Proof.
+  intros s toks Hlex.
+  unfold lex_surface in Hlex.
+  eapply lex_surface_aux_payload_valid.
+  exact Hlex.
+Qed.
+
+Lemma surface_token_payload_validb_sound :
+  forall t,
+    surface_token_payload_validb t = true ->
+    surface_token_payload_valid t.
+Proof.
+  intros t H.
+  destruct t; simpl in *; try exact I.
+  - apply ustring_validb_sound. exact H.
+  - apply ustring_validb_sound. exact H.
+Qed.
+
+Lemma surface_tokens_payload_validb_sound :
+  forall toks,
+    forallb surface_token_payload_validb toks = true ->
+    Forall surface_token_payload_valid toks.
+Proof.
+  induction toks as [|t toks IH]; intro H; simpl in H.
+  - constructor.
+  - apply andb_true_iff in H as [Ht Hrest].
+    constructor.
+    + apply surface_token_payload_validb_sound. exact Ht.
+    + apply IH. exact Hrest.
+Qed.
+
+Theorem lex_surface_payload_valid_forall :
+  forall s toks,
+    lex_surface s = LexSurfaceOk toks ->
+    Forall surface_token_payload_valid toks.
+Proof.
+  intros s toks Hlex.
+  apply surface_tokens_payload_validb_sound.
+  eapply lex_surface_payload_valid.
+  exact Hlex.
+Qed.
 
 Definition regex_of_ustring_char (cp:codepoint) : ascii :=
   ascii_of_nat (Z.to_nat cp).
@@ -2106,7 +2413,7 @@ Fixpoint parse_surface_fexpr_fuel
       end
   end.
 
-Fixpoint parse_surface_selector_fuel
+Definition parse_surface_selector_fuel
     (fuel:nat) (toks:list surface_token)
     : option (selector * list surface_token) :=
   match fuel with
