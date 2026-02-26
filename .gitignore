@@ -6,6 +6,9 @@
 *.aux
 .*.aux
 .lia.cache
+CoqMakefile
+CoqMakefile.conf
+.CoqMakefile.d
 
 # OCaml extraction artifacts
 *.ml

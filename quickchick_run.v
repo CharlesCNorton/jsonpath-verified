@@ -1,0 +1,6 @@
+Load "/mnt/d/jsonpath-verified/jsonpath_verified.v".
+QuickChick prop_linear_len_le1.
+QuickChick prop_wildcard_object_length.
+QuickChick prop_wildcard_array_length.
+QuickChick prop_desc_superset_name.
+QuickChick prop_search_as_match_on_strings.
