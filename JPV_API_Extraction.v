@@ -49,20 +49,51 @@ Module API.
 
   Theorem eval_checked_exact :
     forall q J,
+      wf_query q = true ->
       eval_checked q J = Ok (eval_exec q J).
+  Proof.
+    intros q J Hwf.
+    unfold eval_checked.
+    rewrite Hwf.
+    reflexivity.
+  Qed.
+
+  Theorem eval_checked_notwf :
+    forall q J,
+      wf_query q = false ->
+      eval_checked q J = Error E_NotWF.
+  Proof.
+    intros q J Hwf.
+    unfold eval_checked.
+    rewrite Hwf.
+    reflexivity.
+  Qed.
+
+  Theorem eval_checked_notwf_iff :
+    forall q J,
+      eval_checked q J = Error E_NotWF <->
+      wf_query q = false.
   Proof.
     intros q J.
     unfold eval_checked, wf_query.
-    rewrite TypingPrecise.wf_query_total.
-    reflexivity.
+    destruct (TypingPrecise.wf_query q) eqn:Hwf.
+    - split.
+      + discriminate.
+      + discriminate.
+    - split.
+      + intro H.
+        reflexivity.
+      + intro H.
+        reflexivity.
   Qed.
 
   Corollary eval_checked_never_notwf :
     forall q J,
+      wf_query q = true ->
       eval_checked q J <> Error E_NotWF.
   Proof.
-    intros q J H.
-    rewrite eval_checked_exact in H.
+    intros q J Hwf H.
+    rewrite (eval_checked_exact q J Hwf) in H.
     discriminate H.
   Qed.
 
@@ -115,64 +146,84 @@ Module UnicodeAPI.
   Arguments Ok   {A E} _.
   Arguments Error{A E} _.
 
-  Fixpoint wf_fexpr (f:ufexpr) : bool :=
-    match f with
-    | UFTrue => true
-    | UFNot g => wf_fexpr g
-    | UFAnd g h | UFOr g h => andb (wf_fexpr g) (wf_fexpr h)
-    | UFExists _ => true
-    | UFCmp _ _ _ => true
-    | UFMatch _ _ | UFSearch _ _ => true
+  Inductive primty := TNull | TBool | TNum | TStr | TAnyPrim.
+
+  Definition aety (a:uaexpr) : primty :=
+    match a with
+    | UAPrim UPNull => TNull
+    | UAPrim (UPBool _) => TBool
+    | UAPrim (UPNum _) => TNum
+    | UAPrim (UPStr _) => TStr
+    | UACount _ => TNum
+    | UALengthV _ => TNum
+    | UAValue _ => TAnyPrim
     end.
 
-  Definition wf_selector (sel:uselector) : bool :=
-    match sel with
-    | USelFilter f => wf_fexpr f
-    | _ => true
+  Definition comparable (t1 t2:primty) : bool :=
+    match t1, t2 with
+    | TAnyPrim, _ => true
+    | _, TAnyPrim => true
+    | TNull, TNull => true
+    | TBool, TBool => true
+    | TNum, TNum => true
+    | TStr, TStr => true
+    | _, _ => false
     end.
 
-  Definition wf_segment (seg:usegment) : bool :=
-    match seg with
-    | UChild sels | UDesc sels => forallb wf_selector sels
+  Fixpoint wf_regex (r:uregex) : bool :=
+    match r with
+    | UREmpty | UREps | URAny => true
+    | URChr c => codepoint_valid c
+    | URAlt r1 r2 | URCat r1 r2 => andb (wf_regex r1) (wf_regex r2)
+    | URStar r1 | URPlus r1 | UROpt r1 => wf_regex r1
+    | URRepeat r1 min max => andb (wf_regex r1) (Nat.leb min max)
+    | URCharClass _ cs => forallb codepoint_valid cs
     end.
 
-  Definition wf_query (q:uquery) : bool :=
-    match q with UQuery segs => forallb wf_segment segs end.
-
-  Lemma wf_fexpr_total :
-    forall f, wf_fexpr f = true.
+  Fixpoint wf_aexpr (a:uaexpr) : bool
+  with wf_fexpr (f:ufexpr) : bool
+  with wf_selector (sel:uselector) : bool
+  with wf_segment (seg:usegment) : bool
+  with wf_query (q:uquery) : bool.
   Proof.
-    induction f; simpl; try reflexivity.
-    - exact IHf.
-    - rewrite IHf1, IHf2. reflexivity.
-    - rewrite IHf1, IHf2. reflexivity.
-  Qed.
-
-  Lemma wf_selector_total :
-    forall sel, wf_selector sel = true.
-  Proof.
-    intros sel.
-    destruct sel; simpl; try reflexivity.
-    apply wf_fexpr_total.
-  Qed.
-
-  Lemma wf_segment_total :
-    forall seg, wf_segment seg = true.
-  Proof.
-    intros [sels|sels]; simpl.
-    - induction sels as [|s sels IH]; simpl; [reflexivity|].
-      rewrite wf_selector_total, IH. reflexivity.
-    - induction sels as [|s sels IH]; simpl; [reflexivity|].
-      rewrite wf_selector_total, IH. reflexivity.
-  Qed.
-
-  Lemma wf_query_total :
-    forall q, wf_query q = true.
-  Proof.
-    intros [segs]. simpl.
-    induction segs as [|seg segs IH]; simpl; [reflexivity|].
-    rewrite wf_segment_total, IH. reflexivity.
-  Qed.
+    - destruct a as [p|q|q|q].
+      + exact true.
+      + exact (wf_query q).
+      + exact (wf_query q).
+      + exact (wf_query q).
+    - destruct f as [|g|g h|g h|q|op a b|a r|a r].
+      + exact true.
+      + exact (wf_fexpr g).
+      + exact (andb (wf_fexpr g) (wf_fexpr h)).
+      + exact (andb (wf_fexpr g) (wf_fexpr h)).
+      + exact (wf_query q).
+      + exact (andb (wf_aexpr a)
+                    (andb (wf_aexpr b)
+                          (comparable (aety a) (aety b)))).
+      + exact (andb (wf_aexpr a)
+                    (andb (wf_regex r)
+                          (match aety a with
+                           | TStr | TAnyPrim => true
+                           | _ => false
+                           end))).
+      + exact (andb (wf_aexpr a)
+                    (andb (wf_regex r)
+                          (match aety a with
+                           | TStr | TAnyPrim => true
+                           | _ => false
+                           end))).
+    - destruct sel as [s| |i|start end_ stp|f].
+      + exact true.
+      + exact true.
+      + exact true.
+      + exact (negb (Z.eqb stp 0)).
+      + exact (wf_fexpr f).
+    - destruct seg as [sels|sels].
+      + exact (forallb wf_selector sels).
+      + exact (forallb wf_selector sels).
+    - destruct q as [segs].
+      exact (forallb wf_segment segs).
+  Defined.
 
   Definition eval_checked (q:uquery) (J:uvalue)
     : result (list unode) exec_error :=
@@ -180,20 +231,51 @@ Module UnicodeAPI.
 
   Theorem eval_checked_exact :
     forall q J,
+      wf_query q = true ->
       eval_checked q J = Ok (UnicodeExec.eval_exec q J).
+  Proof.
+    intros q J Hwf.
+    unfold eval_checked.
+    rewrite Hwf.
+    reflexivity.
+  Qed.
+
+  Theorem eval_checked_notwf :
+    forall q J,
+      wf_query q = false ->
+      eval_checked q J = Error E_NotWF.
+  Proof.
+    intros q J Hwf.
+    unfold eval_checked.
+    rewrite Hwf.
+    reflexivity.
+  Qed.
+
+  Theorem eval_checked_notwf_iff :
+    forall q J,
+      eval_checked q J = Error E_NotWF <->
+      wf_query q = false.
   Proof.
     intros q J.
     unfold eval_checked.
-    rewrite wf_query_total.
-    reflexivity.
+    destruct (wf_query q) eqn:Hwf.
+    - split.
+      + discriminate.
+      + discriminate.
+    - split.
+      + intro H.
+        reflexivity.
+      + intro H.
+        reflexivity.
   Qed.
 
   Corollary eval_checked_never_notwf :
     forall q J,
+      wf_query q = true ->
       eval_checked q J <> Error E_NotWF.
   Proof.
-    intros q J H.
-    rewrite eval_checked_exact in H.
+    intros q J Hwf H.
+    rewrite (eval_checked_exact q J Hwf) in H.
     discriminate H.
   Qed.
 

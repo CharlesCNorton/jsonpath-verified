@@ -54,6 +54,48 @@ Definition ustring_leb (u1 u2:ustring) : bool :=
 Definition ascii_to_codepoint (a:ascii) : codepoint :=
   Z.of_nat (nat_of_ascii a).
 
+Definition ustring_validb (u:ustring) : bool :=
+  forallb codepoint_valid u.
+
+Definition valid_ustring (u:ustring) : Prop :=
+  Forall (fun cp => codepoint_valid cp = true) u.
+
+Lemma ustring_validb_sound :
+  forall u,
+    ustring_validb u = true ->
+    valid_ustring u.
+Proof.
+  induction u as [|cp u IHu]; intro H; simpl in *.
+  - constructor.
+  - apply andb_true_iff in H as [Hcp Hu].
+    constructor.
+    + exact Hcp.
+    + apply IHu. exact Hu.
+Qed.
+
+Lemma ascii_codepoint_valid :
+  forall a, codepoint_valid (ascii_to_codepoint a) = true.
+Proof.
+  intro a.
+  unfold codepoint_valid, ascii_to_codepoint.
+  assert (HnZ : (Z.of_nat (nat_of_ascii a) <= 255)%Z).
+  { pose proof (nat_ascii_bounded a) as Hn.
+    apply Nat2Z.inj_lt in Hn.
+    lia. }
+  assert (Hsur : ((surrogate_lo <=? Z.of_nat (nat_of_ascii a)) &&
+                  (Z.of_nat (nat_of_ascii a) <=? surrogate_hi)) = false).
+  { apply andb_false_iff.
+    left.
+    apply Z.leb_gt.
+    unfold surrogate_lo in *.
+    lia. }
+  apply andb_true_iff; split.
+  - apply andb_true_iff; split.
+    + apply Z.leb_le. lia.
+    + apply Z.leb_le. unfold max_codepoint. lia.
+  - rewrite Hsur. reflexivity.
+Qed.
+
 Fixpoint string_to_ustring (s:string) : ustring :=
   match s with
   | EmptyString => []
@@ -76,6 +118,154 @@ Proof.
     rewrite Nat2Z.id.
     rewrite ascii_nat_embedding.
     reflexivity.
+Qed.
+
+Theorem string_to_ustring_valid :
+  forall s,
+    valid_ustring (string_to_ustring s).
+Proof.
+  induction s as [|a s IH]; simpl.
+  - constructor.
+  - constructor.
+    + apply ascii_codepoint_valid.
+    + exact IH.
+Qed.
+
+Record vustring := {
+  vun_data : ustring;
+  vun_valid : valid_ustring vun_data
+}.
+
+Definition mk_vustring (u:ustring) : option vustring :=
+  match ustring_validb u as b return (ustring_validb u = b -> option vustring) with
+  | true =>
+      fun Hvalid =>
+        Some {| vun_data := u; vun_valid := ustring_validb_sound u Hvalid |}
+  | false => fun _ => None
+  end eq_refl.
+
+Definition ascii_vustring (s:string) : vustring :=
+  {| vun_data := string_to_ustring s;
+     vun_valid := string_to_ustring_valid s |}.
+
+Definition codepoint_ascii_compatible (cp:codepoint) : bool :=
+  (0 <=? cp) && (cp <=? 255).
+
+Definition codepoint_to_ascii_opt (cp:codepoint) : option ascii :=
+  if codepoint_ascii_compatible cp
+  then Some (ascii_of_nat (Z.to_nat cp))
+  else None.
+
+Fixpoint ustring_to_ascii_opt (u:ustring) : option string :=
+  match u with
+  | [] => Some EmptyString
+  | cp::u' =>
+      match codepoint_to_ascii_opt cp, ustring_to_ascii_opt u' with
+      | Some a, Some s' => Some (String a s')
+      | _, _ => None
+      end
+  end.
+
+Lemma codepoint_ascii_compatible_spec :
+  forall cp,
+    codepoint_ascii_compatible cp = true <->
+    (0 <= cp <= 255)%Z.
+Proof.
+  intro cp.
+  unfold codepoint_ascii_compatible.
+  split.
+  - intro H.
+    apply andb_true_iff in H as [Hlo Hhi].
+    apply Z.leb_le in Hlo.
+    apply Z.leb_le in Hhi.
+    lia.
+  - intro H.
+    apply andb_true_iff.
+    split.
+    + apply Z.leb_le. lia.
+    + apply Z.leb_le. lia.
+Qed.
+
+Lemma codepoint_to_ascii_opt_of_ascii :
+  forall a,
+    codepoint_to_ascii_opt (ascii_to_codepoint a) = Some a.
+Proof.
+  intro a.
+  unfold codepoint_to_ascii_opt, codepoint_ascii_compatible, ascii_to_codepoint.
+  assert (Hlo : (0 <=? Z.of_nat (nat_of_ascii a)) = true).
+  { apply Z.leb_le. apply Zle_0_nat. }
+  assert (Hhi : (Z.of_nat (nat_of_ascii a) <=? 255) = true).
+  { apply Z.leb_le.
+    pose proof (nat_ascii_bounded a) as Hn.
+    apply Nat2Z.inj_lt in Hn.
+    lia. }
+  rewrite Hlo, Hhi.
+  simpl.
+  rewrite Nat2Z.id.
+  rewrite ascii_nat_embedding.
+  reflexivity.
+Qed.
+
+Lemma codepoint_to_ascii_opt_sound :
+  forall cp a,
+    codepoint_to_ascii_opt cp = Some a ->
+    ascii_to_codepoint a = cp.
+Proof.
+  intros cp a H.
+  unfold codepoint_to_ascii_opt, codepoint_ascii_compatible in H.
+  destruct ((0 <=? cp) && (cp <=? 255)) eqn:Hok; try discriminate.
+  inversion H; subst a; clear H.
+  apply andb_true_iff in Hok as [Hlo Hhi].
+  apply Z.leb_le in Hlo.
+  apply Z.leb_le in Hhi.
+  unfold ascii_to_codepoint.
+  rewrite nat_ascii_embedding.
+  - rewrite Z2Nat.id by lia.
+    reflexivity.
+  - change 256%nat with (Z.to_nat 256).
+    assert (Hiff : (cp < 256 <-> (Z.to_nat cp < Z.to_nat 256)%nat)).
+    { apply Z2Nat.inj_lt; lia. }
+    apply (proj1 Hiff).
+    lia.
+Qed.
+
+Theorem ascii_partial_roundtrip :
+  forall s,
+    ustring_to_ascii_opt (string_to_ustring s) = Some s.
+Proof.
+  induction s as [|a s IH]; simpl.
+  - reflexivity.
+  - rewrite codepoint_to_ascii_opt_of_ascii.
+    rewrite IH.
+    reflexivity.
+Qed.
+
+Theorem ustring_to_ascii_opt_sound :
+  forall u s,
+    ustring_to_ascii_opt u = Some s ->
+    string_to_ustring s = u.
+Proof.
+  induction u as [|cp u IHu]; intros s H; simpl in H.
+  - inversion H. reflexivity.
+  - destruct (codepoint_to_ascii_opt cp) as [a|] eqn:Hcp; try discriminate.
+    destruct (ustring_to_ascii_opt u) as [s'|] eqn:Hrest; try discriminate.
+    inversion H; subst s; clear H.
+    apply codepoint_to_ascii_opt_sound in Hcp.
+    specialize (IHu s' eq_refl).
+    simpl.
+    rewrite Hcp, IHu.
+    reflexivity.
+Qed.
+
+Corollary ustring_to_ascii_opt_simulates_total :
+  forall u s,
+    ustring_to_ascii_opt u = Some s ->
+    ustring_to_ascii_string u = s.
+Proof.
+  intros u s H.
+  pose proof (ustring_to_ascii_opt_sound u s H) as Hu.
+  rewrite <- Hu.
+  apply ascii_roundtrip.
 Qed.
 
 End Unicode.
@@ -149,6 +339,261 @@ Definition of_ascii_node (n:JSON.node) : unode :=
 
 Definition to_ascii_node (n:unode) : JSON.node :=
   (to_ascii_path (fst n), to_ascii_value (snd n)).
+
+Inductive uvalue_valid : uvalue -> Prop :=
+| UValNull :
+    uvalue_valid UNull
+| UValBool :
+    forall b,
+      uvalue_valid (UBool b)
+| UValNum :
+    forall n,
+      uvalue_valid (UNum n)
+| UValStr :
+    forall s,
+      valid_ustring s ->
+      uvalue_valid (UStr s)
+| UValArr :
+    forall xs,
+      Forall uvalue_valid xs ->
+      uvalue_valid (UArr xs)
+| UValObj :
+    forall fields,
+      Forall (fun kv => valid_ustring (fst kv) /\ uvalue_valid (snd kv)) fields ->
+      uvalue_valid (UObject fields).
+
+Definition ustep_valid (s:ustep) : Prop :=
+  match s with
+  | USName k => valid_ustring k
+  | USIndex _ => True
+  end.
+
+Definition upath_valid (p:upath) : Prop := Forall ustep_valid p.
+
+Definition unode_valid (n:unode) : Prop :=
+  upath_valid (fst n) /\ uvalue_valid (snd n).
+
+Fixpoint to_ascii_value_opt (v:uvalue) : option JSON.value :=
+  match v with
+  | UNull => Some JNull
+  | UBool b => Some (JBool b)
+  | UNum n => Some (JNum n)
+  | UStr s =>
+      match ustring_to_ascii_opt s with
+      | Some s' => Some (JStr s')
+      | None => None
+      end
+  | UArr xs =>
+      let fix go (ys:list uvalue) : option (list JSON.value) :=
+          match ys with
+          | [] => Some []
+          | y::ys' =>
+              match to_ascii_value_opt y, go ys' with
+              | Some y', Some ys'' => Some (y' :: ys'')
+              | _, _ => None
+              end
+          end in
+      match go xs with
+      | Some ys => Some (JArr ys)
+      | None => None
+      end
+  | UObject fs =>
+      let fix go (gs:list (ustring * uvalue))
+          : option (list (string * JSON.value)) :=
+          match gs with
+          | [] => Some []
+          | (k, v')::gs' =>
+              match ustring_to_ascii_opt k, to_ascii_value_opt v', go gs' with
+              | Some k', Some v'', Some gs'' => Some ((k', v'') :: gs'')
+              | _, _, _ => None
+              end
+          end in
+      match go fs with
+      | Some fs' => Some (JObject fs')
+      | None => None
+      end
+  end.
+
+Definition to_ascii_step_opt (s:ustep) : option JSON.step :=
+  match s with
+  | USName k =>
+      match ustring_to_ascii_opt k with
+      | Some k' => Some (JSON.SName k')
+      | None => None
+      end
+  | USIndex i => Some (JSON.SIndex i)
+  end.
+
+Fixpoint to_ascii_path_opt (p:upath) : option JSON.path :=
+  match p with
+  | [] => Some []
+  | s::ps =>
+      match to_ascii_step_opt s, to_ascii_path_opt ps with
+      | Some s', Some ps' => Some (s' :: ps')
+      | _, _ => None
+      end
+  end.
+
+Definition to_ascii_node_opt (n:unode) : option JSON.node :=
+  match to_ascii_path_opt (fst n), to_ascii_value_opt (snd n) with
+  | Some p, Some v => Some (p, v)
+  | _, _ => None
+  end.
+
+Theorem of_ascii_value_valid :
+  forall v,
+    uvalue_valid (of_ascii_value v).
+Proof.
+  fix IH 1.
+  intro v.
+  destruct v as [|b|n|s|xs|fields]; simpl.
+  - constructor.
+  - constructor.
+  - constructor.
+  - constructor.
+    apply string_to_ustring_valid.
+  - apply UValArr.
+    induction xs as [|x xs IHxs]; simpl.
+    + constructor.
+    + constructor.
+      * apply IH.
+      * exact IHxs.
+  - apply UValObj.
+    induction fields as [|[k v'] fs IHfs]; simpl.
+    + constructor.
+    + constructor.
+      * split.
+        -- apply string_to_ustring_valid.
+        -- apply IH.
+      * exact IHfs.
+Qed.
+
+Lemma of_ascii_step_valid :
+  forall s,
+    ustep_valid (of_ascii_step s).
+Proof.
+  intros [k|i]; simpl.
+  - apply string_to_ustring_valid.
+  - exact I.
+Qed.
+
+Lemma of_ascii_path_valid :
+  forall p,
+    upath_valid (of_ascii_path p).
+Proof.
+  induction p as [|s p IH]; simpl.
+  - constructor.
+  - constructor.
+    + apply of_ascii_step_valid.
+    + exact IH.
+Qed.
+
+Lemma of_ascii_node_valid :
+  forall n,
+    unode_valid (of_ascii_node n).
+Proof.
+  intros [p v]. unfold unode_valid, of_ascii_node. simpl.
+  split.
+  - apply of_ascii_path_valid.
+  - apply of_ascii_value_valid.
+Qed.
+
+Theorem to_ascii_value_opt_of_ascii :
+  forall v,
+    to_ascii_value_opt (of_ascii_value v) = Some v.
+Proof.
+  fix IH 1.
+  intro v.
+  destruct v as [|b|n|s|xs|fields]; simpl.
+  - reflexivity.
+  - reflexivity.
+  - reflexivity.
+  - rewrite ascii_partial_roundtrip. reflexivity.
+  - assert
+      (Hxs :
+        (fix go (ys : list uvalue) : option (list JSON.value) :=
+           match ys with
+           | [] => Some []
+           | y :: ys' =>
+               match to_ascii_value_opt y, go ys' with
+               | Some y', Some ys'' => Some (y' :: ys'')
+               | _, _ => None
+               end
+           end) (map of_ascii_value xs) = Some xs).
+    { induction xs as [|x xs IHxs]; simpl.
+      - reflexivity.
+      - rewrite (IH x), IHxs. reflexivity. }
+    rewrite Hxs. reflexivity.
+  - induction fields as [|[k v'] fs IHfs]; simpl.
+    + reflexivity.
+    + rewrite ascii_partial_roundtrip.
+      rewrite (IH v').
+      assert
+        (Htail :
+          (fix go (gs : list (ustring * uvalue))
+             : option (list (string * JSON.value)) :=
+             match gs with
+             | [] => Some []
+             | (k0, v0) :: gs' =>
+                 match ustring_to_ascii_opt k0, to_ascii_value_opt v0, go gs' with
+                 | Some k', Some v'', Some gs'' => Some ((k', v'') :: gs'')
+                 | _, _, _ => None
+                 end
+             end)
+            (map (fun '(k0, v0) => (string_to_ustring k0, of_ascii_value v0)) fs)
+          = Some fs).
+      {
+        specialize IHfs.
+        simpl in IHfs.
+        destruct
+          ((fix go (gs : list (ustring * uvalue))
+              : option (list (string * JSON.value)) :=
+              match gs with
+              | [] => Some []
+              | (k0, v0) :: gs' =>
+                  match ustring_to_ascii_opt k0, to_ascii_value_opt v0, go gs' with
+                  | Some k', Some v'', Some gs'' => Some ((k', v'') :: gs'')
+                  | _, _, _ => None
+                  end
+              end)
+             (map (fun '(k0, v0) => (string_to_ustring k0, of_ascii_value v0)) fs))
+          as [fs'|] eqn:Hgo; try discriminate.
+        inversion IHfs; subst.
+        reflexivity.
+      }
+      rewrite Htail.
+      reflexivity.
+Qed.
+
+Lemma to_ascii_step_opt_of_ascii :
+  forall s,
+    to_ascii_step_opt (of_ascii_step s) = Some s.
+Proof.
+  intros [k|i]; simpl.
+  - rewrite ascii_partial_roundtrip. reflexivity.
+  - reflexivity.
+Qed.
+
+Theorem to_ascii_path_opt_of_ascii :
+  forall p,
+    to_ascii_path_opt (of_ascii_path p) = Some p.
+Proof.
+  induction p as [|s p IH]; simpl.
+  - reflexivity.
+  - rewrite to_ascii_step_opt_of_ascii.
+    rewrite IH.
+    reflexivity.
+Qed.
+
+Theorem to_ascii_node_opt_of_ascii :
+  forall n,
+    to_ascii_node_opt (of_ascii_node n) = Some n.
+Proof.
+  intros [p v]. unfold to_ascii_node_opt, of_ascii_node. simpl.
+  rewrite to_ascii_path_opt_of_ascii.
+  rewrite to_ascii_value_opt_of_ascii.
+  reflexivity.
+Qed.
 
 Theorem to_ascii_of_ascii_value :
   forall v, to_ascii_value (of_ascii_value v) = v.
@@ -1283,6 +1728,572 @@ Proof.
   apply ABNFFullQuery.
   unfold parse_full_segments in Hsegs.
   eapply parse_full_segments_fuel_sound; eauto.
+Qed.
+
+(* ------------------------------------------------------------ *)
+(* Concrete Unicode Surface Lexer + Parser                      *)
+(* ------------------------------------------------------------ *)
+
+Inductive surface_token :=
+| STDollar
+| STDot
+| STDesc
+| STLBracket
+| STRBracket
+| STComma
+| STStar
+| STQMark
+| STLParen
+| STRParen
+| STColon
+| STName (n:ustring)
+| STInt (i:Z)
+| STString (s:ustring)
+| STKwTrue
+| STKwFalse
+| STKwNull
+| STKwNot
+| STKwAnd
+| STKwOr
+| STKwExists
+| STKwCmp
+| STKwMatch
+| STKwSearch
+| STKwCount
+| STKwValue
+| STKwLength
+| STCmpOp (op:cmp).
+
+Inductive lex_error_kind :=
+| LexUnexpectedChar
+| LexInvalidCodepoint
+| LexUnterminatedString
+| LexInvalidNumber.
+
+Record lex_error := {
+  lex_err_pos : nat;
+  lex_err_kind : lex_error_kind;
+  lex_err_char : option codepoint
+}.
+
+Inductive lex_surface_result :=
+| LexSurfaceOk (toks:list surface_token)
+| LexSurfaceError (err:lex_error).
+
+Definition cp_eq (cp z:Z) : bool := Z.eqb cp z.
+
+Definition cp_is_space (cp:codepoint) : bool :=
+  cp_eq cp 32 || cp_eq cp 9 || cp_eq cp 10 || cp_eq cp 13.
+
+Definition cp_is_digit (cp:codepoint) : bool :=
+  (48 <=? cp) && (cp <=? 57).
+
+Definition cp_is_alpha (cp:codepoint) : bool :=
+  ((65 <=? cp) && (cp <=? 90)) ||
+  ((97 <=? cp) && (cp <=? 122)).
+
+Definition cp_is_ident_start (cp:codepoint) : bool :=
+  cp_is_alpha cp || cp_eq cp 95.
+
+Definition cp_is_ident_continue (cp:codepoint) : bool :=
+  cp_is_ident_start cp || cp_is_digit cp.
+
+Fixpoint take_while_cp
+    (fuel:nat) (pred:codepoint -> bool) (cs:ustring)
+    : ustring * ustring * nat :=
+  match fuel with
+  | O => ([], cs, 0%nat)
+  | S fuel' =>
+      match cs with
+      | [] => ([], [], 0%nat)
+      | c::rest =>
+          if pred c then
+            let '(pref, rem, n) := take_while_cp fuel' pred rest in
+            (c :: pref, rem, S n)
+          else ([], cs, 0%nat)
+      end
+  end.
+
+Fixpoint parse_digits_acc (ds:ustring) (acc:Z) : Z :=
+  match ds with
+  | [] => acc
+  | d::ds' => parse_digits_acc ds' (10 * acc + (d - 48))
+  end.
+
+Definition parse_digits (ds:ustring) : Z :=
+  parse_digits_acc ds 0.
+
+Definition lex_surface_prepend (t:surface_token) (r:lex_surface_result)
+    : lex_surface_result :=
+  match r with
+  | LexSurfaceOk toks => LexSurfaceOk (t :: toks)
+  | LexSurfaceError e => LexSurfaceError e
+  end.
+
+Fixpoint lex_string_body
+    (fuel:nat) (pos:nat) (acc:ustring) (cs:ustring)
+    : option (ustring * ustring * nat) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match cs with
+      | [] => None
+      | c::rest =>
+          if cp_eq c 34 then Some (rev acc, rest, 1%nat)
+          else
+            match lex_string_body fuel' (S pos) (c::acc) rest with
+            | Some (s, rem, n) => Some (s, rem, S n)
+            | None => None
+            end
+      end
+  end.
+
+Definition surface_keyword_or_name (u:ustring) : surface_token :=
+  let s := parse_name u in
+  if string_eqb s "true" then STKwTrue else
+  if string_eqb s "false" then STKwFalse else
+  if string_eqb s "null" then STKwNull else
+  if string_eqb s "not" then STKwNot else
+  if string_eqb s "and" then STKwAnd else
+  if string_eqb s "or" then STKwOr else
+  if string_eqb s "exists" then STKwExists else
+  if string_eqb s "cmp" then STKwCmp else
+  if string_eqb s "match" then STKwMatch else
+  if string_eqb s "search" then STKwSearch else
+  if string_eqb s "count" then STKwCount else
+  if string_eqb s "value" then STKwValue else
+  if string_eqb s "length" then STKwLength else
+  if string_eqb s "eq" then STCmpOp CEq else
+  if string_eqb s "ne" then STCmpOp CNe else
+  if string_eqb s "lt" then STCmpOp CLt else
+  if string_eqb s "le" then STCmpOp CLe else
+  if string_eqb s "gt" then STCmpOp CGt else
+  if string_eqb s "ge" then STCmpOp CGe else
+  STName u.
+
+Fixpoint lex_surface_aux (fuel:nat) (pos:nat) (cs:ustring)
+    : lex_surface_result :=
+  match fuel with
+  | O =>
+      LexSurfaceError
+        {| lex_err_pos := pos;
+           lex_err_kind := LexUnexpectedChar;
+           lex_err_char := None |}
+  | S fuel' =>
+      match cs with
+      | [] => LexSurfaceOk []
+      | c::rest =>
+          if negb (codepoint_valid c) then
+            LexSurfaceError
+              {| lex_err_pos := pos;
+                 lex_err_kind := LexInvalidCodepoint;
+                 lex_err_char := Some c |}
+          else if cp_is_space c then
+            lex_surface_aux fuel' (S pos) rest
+          else if cp_eq c 36 then (* $ *)
+            lex_surface_prepend STDollar (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 46 then (* . or .. *)
+            match rest with
+            | c2::rest2 =>
+                if cp_eq c2 46 then
+                  lex_surface_prepend STDesc (lex_surface_aux fuel' (pos + 2)%nat rest2)
+                else
+                  lex_surface_prepend STDot (lex_surface_aux fuel' (S pos) rest)
+            | [] =>
+                lex_surface_prepend STDot (lex_surface_aux fuel' (S pos) rest)
+            end
+          else if cp_eq c 91 then
+            lex_surface_prepend STLBracket (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 93 then
+            lex_surface_prepend STRBracket (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 44 then
+            lex_surface_prepend STComma (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 42 then
+            lex_surface_prepend STStar (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 63 then
+            lex_surface_prepend STQMark (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 40 then
+            lex_surface_prepend STLParen (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 41 then
+            lex_surface_prepend STRParen (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 58 then
+            lex_surface_prepend STColon (lex_surface_aux fuel' (S pos) rest)
+          else if cp_eq c 34 then (* quoted string *)
+            match lex_string_body fuel' (S pos) [] rest with
+            | Some (s, rem, consumed) =>
+                lex_surface_prepend (STString s)
+                  (lex_surface_aux fuel' (pos + 1 + consumed)%nat rem)
+            | None =>
+                LexSurfaceError
+                  {| lex_err_pos := pos;
+                     lex_err_kind := LexUnterminatedString;
+                     lex_err_char := Some c |}
+            end
+          else if cp_eq c 45 then (* negative integer *)
+            match rest with
+            | d::rest' =>
+                if cp_is_digit d then
+                  let '(digits, rem, consumed) :=
+                      take_while_cp fuel' cp_is_digit rest in
+                  let z := - (parse_digits digits) in
+                  lex_surface_prepend (STInt z)
+                    (lex_surface_aux fuel' (pos + 1 + consumed)%nat rem)
+                else
+                  LexSurfaceError
+                    {| lex_err_pos := pos;
+                       lex_err_kind := LexInvalidNumber;
+                       lex_err_char := Some c |}
+            | [] =>
+                LexSurfaceError
+                  {| lex_err_pos := pos;
+                     lex_err_kind := LexInvalidNumber;
+                     lex_err_char := Some c |}
+            end
+          else if cp_is_digit c then
+            let '(digits, rem, consumed) :=
+                take_while_cp fuel' cp_is_digit cs in
+            let z := parse_digits digits in
+            lex_surface_prepend (STInt z)
+              (lex_surface_aux fuel' (pos + consumed)%nat rem)
+          else if cp_is_ident_start c then
+            let '(ident, rem, consumed) :=
+                take_while_cp fuel' cp_is_ident_continue cs in
+            let tok := surface_keyword_or_name ident in
+            lex_surface_prepend tok
+              (lex_surface_aux fuel' (pos + consumed)%nat rem)
+          else
+            LexSurfaceError
+              {| lex_err_pos := pos;
+                 lex_err_kind := LexUnexpectedChar;
+                 lex_err_char := Some c |}
+      end
+  end.
+
+Definition lex_surface (s:ustring) : lex_surface_result :=
+  lex_surface_aux (S (List.length s)) 0 s.
+
+Definition regex_of_ustring_char (cp:codepoint) : ascii :=
+  ascii_of_nat (Z.to_nat cp).
+
+Fixpoint regex_of_ustring (u:ustring) : regex :=
+  match u with
+  | [] => REps
+  | c::u' => RCat (RChr (regex_of_ustring_char c)) (regex_of_ustring u')
+  end.
+
+Definition parse_surface_slice_tail
+    (start:option Z) (toks:list surface_token)
+    : option (selector * list surface_token) :=
+  let '(end_opt, rest1) :=
+      match toks with
+      | STInt j :: rest => (Some j, rest)
+      | _ => (None, toks)
+      end in
+  match rest1 with
+  | STColon :: rest2 =>
+      let '(step_opt, rest3) :=
+          match rest2 with
+          | STInt k :: rest => (Some k, rest)
+          | _ => (None, rest2)
+          end in
+      Some (SelSlice start end_opt
+                     (match step_opt with Some z => z | None => 1 end), rest3)
+  | _ => Some (SelSlice start end_opt 1, rest1)
+  end.
+
+Fixpoint parse_surface_aexpr_fuel
+    (fuel:nat) (toks:list surface_token)
+    : option (aexpr * list surface_token) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match toks with
+      | STKwNull :: rest => Some (APrim PNull, rest)
+      | STKwTrue :: rest => Some (APrim (PBool true), rest)
+      | STKwFalse :: rest => Some (APrim (PBool false), rest)
+      | STInt z :: rest => Some (APrim (PNum (Q_of_Z z)), rest)
+      | STString s :: rest => Some (APrim (PStr (parse_name s)), rest)
+      | STKwCount :: rest => Some (ACount (Query []), rest)
+      | STKwValue :: rest => Some (AValue (Query []), rest)
+      | STKwLength :: rest => Some (ALengthV (Query []), rest)
+      | STLParen :: rest =>
+          match parse_surface_aexpr_fuel fuel' rest with
+          | Some (a, STRParen :: rest') => Some (a, rest')
+          | _ => None
+          end
+      | _ => None
+      end
+  end.
+
+Definition parse_surface_regex
+    (toks:list surface_token) : option (regex * list surface_token) :=
+  match toks with
+  | STString s :: rest => Some (regex_of_ustring s, rest)
+  | STName n :: rest =>
+      let k := parse_name n in
+      if string_eqb k "any" then Some (RAny, rest)
+      else if string_eqb k "eps" then Some (REps, rest)
+      else if string_eqb k "empty" then Some (REmpty, rest)
+      else None
+  | _ => None
+  end.
+
+Fixpoint parse_surface_fexpr_fuel
+    (fuel:nat) (toks:list surface_token)
+    : option (fexpr * list surface_token) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match toks with
+      | STKwTrue :: rest => Some (FTrue, rest)
+      | STKwNot :: STLParen :: rest =>
+          match parse_surface_fexpr_fuel fuel' rest with
+          | Some (f, STRParen :: rest') => Some (FNot f, rest')
+          | _ => None
+          end
+      | STKwAnd :: STLParen :: rest =>
+          match parse_surface_fexpr_fuel fuel' rest with
+          | Some (f1, STComma :: rest1) =>
+              match parse_surface_fexpr_fuel fuel' rest1 with
+              | Some (f2, STRParen :: rest2) => Some (FAnd f1 f2, rest2)
+              | _ => None
+              end
+          | _ => None
+          end
+      | STKwOr :: STLParen :: rest =>
+          match parse_surface_fexpr_fuel fuel' rest with
+          | Some (f1, STComma :: rest1) =>
+              match parse_surface_fexpr_fuel fuel' rest1 with
+              | Some (f2, STRParen :: rest2) => Some (FOr f1 f2, rest2)
+              | _ => None
+              end
+          | _ => None
+          end
+      | STKwExists :: rest => Some (FExists (Query []), rest)
+      | STKwCmp :: STLParen :: rest =>
+          match rest with
+          | STCmpOp op :: STComma :: rest0 =>
+              match parse_surface_aexpr_fuel fuel' rest0 with
+              | Some (a1, STComma :: rest1) =>
+                  match parse_surface_aexpr_fuel fuel' rest1 with
+                  | Some (a2, STRParen :: rest2) =>
+                      Some (FCmp op a1 a2, rest2)
+                  | _ => None
+                  end
+              | _ => None
+              end
+          | _ => None
+          end
+      | STKwMatch :: STLParen :: rest =>
+          match parse_surface_aexpr_fuel fuel' rest with
+          | Some (a, STComma :: rest1) =>
+              match parse_surface_regex rest1 with
+              | Some (r, STRParen :: rest2) => Some (FMatch a r, rest2)
+              | _ => None
+              end
+          | _ => None
+          end
+      | STKwSearch :: STLParen :: rest =>
+          match parse_surface_aexpr_fuel fuel' rest with
+          | Some (a, STComma :: rest1) =>
+              match parse_surface_regex rest1 with
+              | Some (r, STRParen :: rest2) => Some (FSearch a r, rest2)
+              | _ => None
+              end
+          | _ => None
+          end
+      | _ => None
+      end
+  end.
+
+Fixpoint parse_surface_selector_fuel
+    (fuel:nat) (toks:list surface_token)
+    : option (selector * list surface_token) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match toks with
+      | STName u :: rest => Some (SelName (parse_name u), rest)
+      | STString u :: rest => Some (SelName (parse_name u), rest)
+      | STStar :: rest => Some (SelWildcard, rest)
+      | STInt i :: STColon :: rest => parse_surface_slice_tail (Some i) rest
+      | STInt i :: rest => Some (SelIndex i, rest)
+      | STColon :: rest => parse_surface_slice_tail None rest
+      | STQMark :: STLParen :: rest =>
+          match parse_surface_fexpr_fuel fuel' rest with
+          | Some (f, STRParen :: rest') => Some (SelFilter f, rest')
+          | _ => None
+          end
+      | _ => None
+      end
+  end.
+
+Fixpoint parse_surface_selector_list_fuel
+    (fuel:nat) (toks:list surface_token)
+    : option (list selector * list surface_token) :=
+  match fuel with
+  | O => None
+  | S fuel' =>
+      match parse_surface_selector_fuel fuel' toks with
+      | Some (sel, STComma :: rest) =>
+          match parse_surface_selector_list_fuel fuel' rest with
+          | Some (sels, final) => Some (sel :: sels, final)
+          | None => None
+          end
+      | Some (sel, rest) => Some ([sel], rest)
+      | None => None
+      end
+  end.
+
+Definition parse_surface_segment
+    (toks:list surface_token) : option (segment * list surface_token) :=
+  match toks with
+  | STDot :: STName u :: rest =>
+      Some (Child [SelName (parse_name u)], rest)
+  | STDot :: STString u :: rest =>
+      Some (Child [SelName (parse_name u)], rest)
+  | STDot :: STStar :: rest =>
+      Some (Child [SelWildcard], rest)
+  | STLBracket :: rest =>
+      match parse_surface_selector_list_fuel (S (List.length rest)) rest with
+      | Some (sels, STRBracket :: final) => Some (Child sels, final)
+      | _ => None
+      end
+  | STDesc :: STName u :: rest =>
+      Some (Desc [SelName (parse_name u)], rest)
+  | STDesc :: STString u :: rest =>
+      Some (Desc [SelName (parse_name u)], rest)
+  | STDesc :: STStar :: rest =>
+      Some (Desc [SelWildcard], rest)
+  | STDesc :: STLBracket :: rest =>
+      match parse_surface_selector_list_fuel (S (List.length rest)) rest with
+      | Some (sels, STRBracket :: final) => Some (Desc sels, final)
+      | _ => None
+      end
+  | _ => None
+  end.
+
+Fixpoint parse_surface_segments_fuel
+    (fuel:nat) (toks:list surface_token)
+    : option (list segment * list surface_token) :=
+  match fuel with
+  | O => Some ([], toks)
+  | S fuel' =>
+      match parse_surface_segment toks with
+      | Some (seg, rest) =>
+          match parse_surface_segments_fuel fuel' rest with
+          | Some (segs, final) => Some (seg :: segs, final)
+          | None => None
+          end
+      | None => Some ([], toks)
+      end
+  end.
+
+Definition parse_surface_query_tokens
+    (toks:list surface_token) : option query :=
+  match toks with
+  | STDollar :: rest =>
+      match parse_surface_segments_fuel (S (List.length rest)) rest with
+      | Some (segs, []) => Some (Query segs)
+      | _ => None
+      end
+  | _ => None
+  end.
+
+Inductive surface_parse_error_kind :=
+| SurfaceLexError (k:lex_error_kind)
+| SurfaceSyntaxError.
+
+Record surface_parse_error := {
+  surface_err_pos : nat;
+  surface_err_kind : surface_parse_error_kind
+}.
+
+Inductive parse_surface_result :=
+| SurfaceParseOk (q:query)
+| SurfaceParseError (e:surface_parse_error).
+
+Definition parse_surface_query_string (s:ustring) : parse_surface_result :=
+  match lex_surface s with
+  | LexSurfaceError e =>
+      SurfaceParseError
+        {| surface_err_pos := lex_err_pos e;
+           surface_err_kind := SurfaceLexError (lex_err_kind e) |}
+  | LexSurfaceOk toks =>
+      match parse_surface_query_tokens toks with
+      | Some q => SurfaceParseOk q
+      | None =>
+          SurfaceParseError
+            {| surface_err_pos := 0;
+               surface_err_kind := SurfaceSyntaxError |}
+      end
+  end.
+
+Definition abnf_surface_query (toks:list surface_token) (q:query) : Prop :=
+  parse_surface_query_tokens toks = Some q.
+
+Theorem parse_surface_query_tokens_sound :
+  forall toks q,
+    parse_surface_query_tokens toks = Some q ->
+    abnf_surface_query toks q.
+Proof.
+  intros toks q H. exact H.
+Qed.
+
+Theorem parse_surface_query_tokens_complete :
+  forall toks q,
+    abnf_surface_query toks q ->
+    parse_surface_query_tokens toks = Some q.
+Proof.
+  intros toks q H. exact H.
+Qed.
+
+Theorem parse_surface_query_tokens_correct :
+  forall toks q,
+    parse_surface_query_tokens toks = Some q <-> abnf_surface_query toks q.
+Proof.
+  intros toks q. split; intro H; exact H.
+Qed.
+
+Definition abnf_surface_string (s:ustring) (q:query) : Prop :=
+  exists toks,
+    lex_surface s = LexSurfaceOk toks /\
+    abnf_surface_query toks q.
+
+Theorem parse_surface_query_string_sound :
+  forall s q,
+    parse_surface_query_string s = SurfaceParseOk q ->
+    abnf_surface_string s q.
+Proof.
+  intros s q H.
+  unfold parse_surface_query_string in H.
+  destruct (lex_surface s) as [toks|e] eqn:Hlex; try discriminate.
+  destruct (parse_surface_query_tokens toks) as [q'|] eqn:Hparse; try discriminate.
+  inversion H; subst.
+  exists toks. split; [assumption|assumption].
+Qed.
+
+Theorem parse_surface_query_string_complete :
+  forall s q,
+    abnf_surface_string s q ->
+    parse_surface_query_string s = SurfaceParseOk q.
+Proof.
+  intros s q [toks [Hlex Hparse]].
+  unfold parse_surface_query_string.
+  rewrite Hlex.
+  rewrite Hparse.
+  reflexivity.
+Qed.
+
+Theorem parse_surface_query_string_correct :
+  forall s q,
+    parse_surface_query_string s = SurfaceParseOk q <->
+    abnf_surface_string s q.
+Proof.
+  intros s q.
+  split.
+  - apply parse_surface_query_string_sound.
+  - apply parse_surface_query_string_complete.
 Qed.
 
 End JSONPathABNF.

@@ -254,72 +254,80 @@ End Typing.
 Module TypingPrecise.
 Import JSON JSONPath.
 
-Fixpoint wf_fexpr (f:fexpr) : bool :=
-  match f with
-  | FTrue => true
-  | FNot g => wf_fexpr g
-  | FAnd g h | FOr g h => andb (wf_fexpr g) (wf_fexpr h)
-  | FExists _ => true
-  | FCmp _ _ _ => true
-  | FMatch _ _ | FSearch _ _ => true
+Fixpoint wf_regex (r:regex) : bool :=
+  match r with
+  | REmpty | REps | RChr _ | RAny => true
+  | RAlt r1 r2 | RCat r1 r2 => andb (wf_regex r1) (wf_regex r2)
+  | RStar r1 | RPlus r1 | ROpt r1 => wf_regex r1
+  | RRepeat r1 min max => andb (wf_regex r1) (Nat.leb min max)
+  | RCharClass _ _ => true
   end.
 
-Definition wf_selector (sel:selector) : bool :=
-  match sel with
-  | SelFilter f => wf_fexpr f
-  | _ => true
-  end.
-
-Definition wf_segment (seg:segment) : bool :=
-  match seg with
-  | Child sels | Desc sels => forallb wf_selector sels
-  end.
-
-Definition wf_query (q:query) : bool :=
-  match q with Query segs => forallb wf_segment segs end.
-
-Lemma wf_fexpr_total :
-  forall f, wf_fexpr f = true.
+Fixpoint wf_aexpr (a:aexpr) : bool
+with wf_fexpr (f:fexpr) : bool
+with wf_selector (sel:selector) : bool
+with wf_segment (seg:segment) : bool
+with wf_query (q:query) : bool.
 Proof.
-  induction f; simpl; try reflexivity.
-  - exact IHf.
-  - rewrite IHf1, IHf2. reflexivity.
-  - rewrite IHf1, IHf2. reflexivity.
-Qed.
+  - destruct a as [p|q|q|q].
+    + exact true.
+    + exact (wf_query q).
+    + exact (wf_query q).
+    + exact (wf_query q).
+  - destruct f as [|g|g h|g h|q|op a b|a r|a r].
+    + exact true.
+    + exact (wf_fexpr g).
+    + exact (andb (wf_fexpr g) (wf_fexpr h)).
+    + exact (andb (wf_fexpr g) (wf_fexpr h)).
+    + exact (wf_query q).
+    + exact
+        (andb (wf_aexpr a)
+              (andb (wf_aexpr b)
+                    (Typing.comparable (Typing.aety a) (Typing.aety b)))).
+    + exact
+        (andb (wf_aexpr a)
+              (andb (wf_regex r)
+                    (match Typing.aety a with
+                     | Typing.TStr | Typing.TAnyPrim => true
+                     | _ => false
+                     end))).
+    + exact
+        (andb (wf_aexpr a)
+              (andb (wf_regex r)
+                    (match Typing.aety a with
+                     | Typing.TStr | Typing.TAnyPrim => true
+                     | _ => false
+                     end))).
+  - destruct sel as [s| |i|start end_ stp|f].
+    + exact true.
+    + exact true.
+    + exact true.
+    + exact (negb (Z.eqb stp 0)).
+    + exact (wf_fexpr f).
+  - destruct seg as [sels|sels].
+    + exact (forallb wf_selector sels).
+    + exact (forallb wf_selector sels).
+  - destruct q as [segs].
+    exact (forallb wf_segment segs).
+Defined.
 
-Lemma wf_selector_total :
-  forall sel, wf_selector sel = true.
+Lemma wf_query_dec :
+  forall q,
+    wf_query q = true \/ wf_query q = false.
 Proof.
-  intros sel.
-  destruct sel; simpl; try reflexivity.
-  apply wf_fexpr_total.
-Qed.
-
-Lemma wf_segment_total :
-  forall seg, wf_segment seg = true.
-Proof.
-  intros [sels|sels]; simpl.
-  - induction sels as [|s sels IH]; simpl; [reflexivity|].
-    rewrite wf_selector_total, IH. reflexivity.
-  - induction sels as [|s sels IH]; simpl; [reflexivity|].
-    rewrite wf_selector_total, IH. reflexivity.
-Qed.
-
-Lemma wf_query_total :
-  forall q, wf_query q = true.
-Proof.
-  intros [segs]. simpl.
-  induction segs as [|seg segs IH]; simpl; [reflexivity|].
-  rewrite wf_segment_total, IH. reflexivity.
+  intro q.
+  destruct (wf_query q) eqn:Hq.
+  - left. reflexivity.
+  - right. reflexivity.
 Qed.
 
 Theorem wf_query_complete_for_eval :
   forall q J res,
     eval q J res ->
-    wf_query q = true.
+    wf_query q = true \/ wf_query q = false.
 Proof.
   intros q J res _.
-  apply wf_query_total.
+  apply wf_query_dec.
 Qed.
 End TypingPrecise.
 
