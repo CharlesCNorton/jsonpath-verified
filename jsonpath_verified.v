@@ -2290,6 +2290,86 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
+(* Todo 1-9 Formalization Closures                              *)
+(* ------------------------------------------------------------ *)
+
+Theorem todo1_holds_b_sound_bool_connectives :
+  forall f n,
+    (match f with FTrue | FNot _ | FAnd _ _ | FOr _ _ => True | _ => False end) ->
+    Exec.holds_b f n = true ->
+    holds_exec f n.
+Proof.
+  intros f n _ H.
+  exact (holds_b_sound f n H).
+Qed.
+
+Theorem todo2_holds_b_sound_cmp_match_search :
+  forall f n,
+    (match f with FCmp _ _ _ | FMatch _ _ | FSearch _ _ => True | _ => False end) ->
+    Exec.holds_b f n = true ->
+    holds_exec f n.
+Proof.
+  intros f n _ H.
+  exact (holds_b_sound f n H).
+Qed.
+
+Theorem todo3_holds_b_sound_exists :
+  forall q n,
+    Exec.holds_b (FExists q) n = true ->
+    holds_exec (FExists q) n.
+Proof.
+  intros q n H.
+  exact (holds_b_sound_fexists q n H).
+Qed.
+
+Theorem todo4_holds_b_complete_all :
+  forall f n,
+    holds_exec f n ->
+    Exec.holds_b f n = true.
+Proof.
+  apply holds_b_complete.
+Qed.
+
+Theorem todo5_sel_exec_sound_full :
+  forall sel n,
+    eval_selector_exec sel n (Exec.sel_exec sel n).
+Proof.
+  apply sel_exec_sound.
+Qed.
+
+Theorem todo6_sel_exec_complete_full :
+  forall sel n res,
+    eval_selector_exec sel n res ->
+    res = Exec.sel_exec sel n.
+Proof.
+  apply sel_exec_complete.
+Qed.
+
+Theorem todo7_desc_segment_equiv_full :
+  forall sels n res,
+    eval_seg_exec (Desc sels) n res <->
+    res = Exec.seg_exec (Desc sels) n.
+Proof.
+  apply desc_segment_equiv.
+Qed.
+
+Theorem todo8_eval_exec_equiv_full :
+  forall q J res,
+    eval_exec_rel q J res <->
+    res = Exec.eval_exec q J.
+Proof.
+  apply eval_exec_equiv.
+Qed.
+
+Theorem todo9_aeval_equiv_full :
+  forall a v p,
+    aeval_rel_exec a v p <->
+    Exec.aeval a v = Some p.
+Proof.
+  apply aeval_exec_equiv.
+Qed.
+
+(* ------------------------------------------------------------ *)
 (* Static well-formedness checks (conservative)                 *)
 (* ------------------------------------------------------------ *)
 
