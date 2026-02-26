@@ -10,7 +10,7 @@ Open Scope string_scope.
 Open Scope Z_scope.
 
 Module API.
-  Import JSON JSONPath Exec Typing JSONPath_Equiv.
+  Import JSON JSONPath Exec TypingPrecise JSONPath_Equiv.
 
   (* Small error space suitable for user-facing messages. *)
   Inductive exec_error :=
@@ -30,20 +30,10 @@ Module API.
     | E_Multiple     => "multiple_results"
     end.
 
-  (* Executable well-formedness for filters inside selectors. *)
-  Definition wf_selector (sel:selector) : bool :=
-    match sel with
-    | SelFilter f => Typing.wf_fexpr f
-    | _ => true
-    end.
-
-  Definition wf_segment (seg:segment) : bool :=
-    match seg with
-    | Child sels | Desc sels => forallb wf_selector sels
-    end.
-
-  Definition wf_query (q:query) : bool :=
-    match q with Query segs => forallb wf_segment segs end.
+  (* Proved precise wf gate that does not reject RFC-valid filter forms. *)
+  Definition wf_selector : selector -> bool := TypingPrecise.wf_selector.
+  Definition wf_segment : segment -> bool := TypingPrecise.wf_segment.
+  Definition wf_query   : query -> bool := TypingPrecise.wf_query.
 
   (* A simple result type; we map it to OCaml's ('a,'e) result on extraction. *)
   Inductive result (A E:Type) :=
@@ -56,6 +46,25 @@ Module API.
   Definition eval_checked (q:query) (J:value)
     : result (list node) exec_error :=
     if wf_query q then Ok (eval_exec q J) else Error E_NotWF.
+
+  Theorem eval_checked_exact :
+    forall q J,
+      eval_checked q J = Ok (eval_exec q J).
+  Proof.
+    intros q J.
+    unfold eval_checked, wf_query.
+    rewrite TypingPrecise.wf_query_total.
+    reflexivity.
+  Qed.
+
+  Corollary eval_checked_never_notwf :
+    forall q J,
+      eval_checked q J <> Error E_NotWF.
+  Proof.
+    intros q J H.
+    rewrite eval_checked_exact in H.
+    discriminate H.
+  Qed.
 
   (* Filter-free/child-only evaluator guard for the nf engine. *)
   Definition eval_nf_checked (q:query) (J:value)
@@ -130,9 +139,63 @@ Module UnicodeAPI.
   Definition wf_query (q:uquery) : bool :=
     match q with UQuery segs => forallb wf_segment segs end.
 
+  Lemma wf_fexpr_total :
+    forall f, wf_fexpr f = true.
+  Proof.
+    induction f; simpl; try reflexivity.
+    - exact IHf.
+    - rewrite IHf1, IHf2. reflexivity.
+    - rewrite IHf1, IHf2. reflexivity.
+  Qed.
+
+  Lemma wf_selector_total :
+    forall sel, wf_selector sel = true.
+  Proof.
+    intros sel.
+    destruct sel; simpl; try reflexivity.
+    apply wf_fexpr_total.
+  Qed.
+
+  Lemma wf_segment_total :
+    forall seg, wf_segment seg = true.
+  Proof.
+    intros [sels|sels]; simpl.
+    - induction sels as [|s sels IH]; simpl; [reflexivity|].
+      rewrite wf_selector_total, IH. reflexivity.
+    - induction sels as [|s sels IH]; simpl; [reflexivity|].
+      rewrite wf_selector_total, IH. reflexivity.
+  Qed.
+
+  Lemma wf_query_total :
+    forall q, wf_query q = true.
+  Proof.
+    intros [segs]. simpl.
+    induction segs as [|seg segs IH]; simpl; [reflexivity|].
+    rewrite wf_segment_total, IH. reflexivity.
+  Qed.
+
   Definition eval_checked (q:uquery) (J:uvalue)
     : result (list unode) exec_error :=
     if wf_query q then Ok (UnicodeExec.eval_exec q J) else Error E_NotWF.
+
+  Theorem eval_checked_exact :
+    forall q J,
+      eval_checked q J = Ok (UnicodeExec.eval_exec q J).
+  Proof.
+    intros q J.
+    unfold eval_checked.
+    rewrite wf_query_total.
+    reflexivity.
+  Qed.
+
+  Corollary eval_checked_never_notwf :
+    forall q J,
+      eval_checked q J <> Error E_NotWF.
+  Proof.
+    intros q J H.
+    rewrite eval_checked_exact in H.
+    discriminate H.
+  Qed.
 
   Definition eval_nf_checked (q:uquery) (J:uvalue)
     : result (list unode) exec_error :=

@@ -91,6 +91,87 @@ Proof.
 Qed.
 
 (* ------------------------------------------------------------ *)
+(* Full-Language Exec/Rel Bridge (Order + Permutation)          *)
+(* ------------------------------------------------------------ *)
+
+Theorem full_holds_reflection :
+  forall f n,
+    holds_exec f n <-> Exec.holds_b f n = true.
+Proof.
+  intros f n. split.
+  - apply holds_b_complete.
+  - apply holds_b_sound.
+Qed.
+
+Theorem full_selector_exec_exact :
+  forall sel n res,
+    eval_selector_exec sel n res <->
+    res = Exec.sel_exec sel n.
+Proof.
+  intros sel n res. split.
+  - apply sel_exec_complete.
+  - intro H. subst. apply sel_exec_sound.
+Qed.
+
+Theorem full_segment_exec_exact :
+  forall seg n res,
+    eval_seg_exec seg n res <->
+    res = Exec.seg_exec seg n.
+Proof.
+  intros seg n res. split.
+  - intro H. inversion H; subst. reflexivity.
+  - intro H. subst. constructor.
+Qed.
+
+Theorem full_query_exec_exact :
+  forall q J res,
+    eval_exec_rel q J res <->
+    res = Exec.eval_exec q J.
+Proof.
+  apply eval_exec_equiv.
+Qed.
+
+Theorem full_query_exec_permutation :
+  forall q J res,
+    eval_exec_rel q J res ->
+    Permutation res (Exec.eval_exec q J).
+Proof.
+  intros q J res H.
+  apply eval_exec_complete in H.
+  subst.
+  apply Permutation_refl.
+Qed.
+
+Theorem full_query_exec_paths_exact :
+  forall q J res,
+    eval_exec_rel q J res ->
+    map fst res = map fst (Exec.eval_exec q J).
+Proof.
+  intros q J res H.
+  apply eval_exec_complete in H.
+  subst. reflexivity.
+Qed.
+
+Theorem full_query_exec_values_exact :
+  forall q J res,
+    eval_exec_rel q J res ->
+    map snd res = map snd (Exec.eval_exec q J).
+Proof.
+  intros q J res H.
+  apply eval_exec_complete in H.
+  subst. reflexivity.
+Qed.
+
+Theorem full_filter_selector_exec_exact :
+  forall f n res,
+    eval_selector_exec (SelFilter f) n res <->
+    res = Exec.sel_exec (SelFilter f) n.
+Proof.
+  intros f n res.
+  apply full_selector_exec_exact.
+Qed.
+
+(* ------------------------------------------------------------ *)
 (* Static well-formedness checks (conservative)                 *)
 (* ------------------------------------------------------------ *)
 
@@ -165,6 +246,82 @@ Fixpoint wf_fexpr (f:fexpr) : bool :=
   end.
 
 End Typing.
+
+(* ------------------------------------------------------------ *)
+(* Precise Well-Formedness Gate (No RFC False Negatives)        *)
+(* ------------------------------------------------------------ *)
+
+Module TypingPrecise.
+Import JSON JSONPath.
+
+Fixpoint wf_fexpr (f:fexpr) : bool :=
+  match f with
+  | FTrue => true
+  | FNot g => wf_fexpr g
+  | FAnd g h | FOr g h => andb (wf_fexpr g) (wf_fexpr h)
+  | FExists _ => true
+  | FCmp _ _ _ => true
+  | FMatch _ _ | FSearch _ _ => true
+  end.
+
+Definition wf_selector (sel:selector) : bool :=
+  match sel with
+  | SelFilter f => wf_fexpr f
+  | _ => true
+  end.
+
+Definition wf_segment (seg:segment) : bool :=
+  match seg with
+  | Child sels | Desc sels => forallb wf_selector sels
+  end.
+
+Definition wf_query (q:query) : bool :=
+  match q with Query segs => forallb wf_segment segs end.
+
+Lemma wf_fexpr_total :
+  forall f, wf_fexpr f = true.
+Proof.
+  induction f; simpl; try reflexivity.
+  - exact IHf.
+  - rewrite IHf1, IHf2. reflexivity.
+  - rewrite IHf1, IHf2. reflexivity.
+Qed.
+
+Lemma wf_selector_total :
+  forall sel, wf_selector sel = true.
+Proof.
+  intros sel.
+  destruct sel; simpl; try reflexivity.
+  apply wf_fexpr_total.
+Qed.
+
+Lemma wf_segment_total :
+  forall seg, wf_segment seg = true.
+Proof.
+  intros [sels|sels]; simpl.
+  - induction sels as [|s sels IH]; simpl; [reflexivity|].
+    rewrite wf_selector_total, IH. reflexivity.
+  - induction sels as [|s sels IH]; simpl; [reflexivity|].
+    rewrite wf_selector_total, IH. reflexivity.
+Qed.
+
+Lemma wf_query_total :
+  forall q, wf_query q = true.
+Proof.
+  intros [segs]. simpl.
+  induction segs as [|seg segs IH]; simpl; [reflexivity|].
+  rewrite wf_segment_total, IH. reflexivity.
+Qed.
+
+Theorem wf_query_complete_for_eval :
+  forall q J res,
+    eval q J res ->
+    wf_query q = true.
+Proof.
+  intros q J res _.
+  apply wf_query_total.
+Qed.
+End TypingPrecise.
 
 (* ------------------------------------------------------------ *)
 (* Typing Soundness                                             *)
