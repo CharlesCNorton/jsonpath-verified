@@ -884,7 +884,10 @@ Lemma deriv_sound : forall a r cs,
   lang (deriv a r) cs -> lang r (a :: cs).
 Proof.
   intros a r. revert a.
-  induction r; intros a cs H.
+  induction r as
+    [ | | c | | r1 IHr1 r2 IHr2 | r1 IHr1 r2 IHr2
+    | r IHr | r IHr | r IHr | r IHr min max | neg chars ];
+    intros a cs H.
   - simpl in H. inversion H.
   - simpl in H. inversion H.
   - simpl in H. destruct (ascii_eqb a c) eqn:Heq.
@@ -918,8 +921,9 @@ Proof.
     unfold deriv in H; fold deriv in H.
     destruct (Nat.ltb max min) eqn:Hlt.
     + (* max < min: deriv = REmpty *) inversion H.
-    + destruct (Nat.eqb min 0) eqn:Hmin; rewrite Hmin in H.
-      * destruct (Nat.eqb max 0) eqn:Hmax; rewrite Hmax in H.
+    + destruct (Nat.eqb min 0) eqn:Hmin.
+      * simpl in H.
+        destruct (Nat.eqb max 0) eqn:Hmax; simpl in H.
         -- (* min=0, max=0: deriv = REmpty *) inversion H.
         -- (* min=0, max>0 *)
            inversion H; subst.
@@ -930,20 +934,221 @@ Proof.
               apply Nat.eqb_neq in Hmax. lia.
            ++ match goal with [ Hempty : lang REmpty _ |- _ ] => inversion Hempty end.
       * (* min>0, max>=min *)
+        simpl in H.
         inversion H; subst.
         change (a :: ?l1 ++ ?l2)%list with ((a :: l1) ++ l2)%list.
         apply LangRepeatStep.
         -- match goal with [ Hd : lang (deriv _ _) _ |- _ ] => apply IHr; exact Hd end.
         -- match goal with [ Hr : lang (RRepeat _ _ _) _ |- _ ] => exact Hr end.
         -- apply Nat.eqb_neq in Hmin. apply Nat.ltb_ge in Hlt. lia.
-  - unfold char_in_list in H.
-    destruct neg.
-    + destruct (char_in_list a cs) eqn:Hcl.
-      * inversion H.
-      * inversion H; subst. apply LangCharClassNeg. exact Hcl.
-    + destruct (char_in_list a cs) eqn:Hcl.
-      * inversion H; subst. apply LangCharClassPos. exact Hcl.
-      * inversion H.
+  - destruct neg.
+    + destruct (char_in_list a chars) eqn:Hcl.
+      * simpl in H. rewrite Hcl in H. simpl in H. inversion H.
+      * simpl in H. rewrite Hcl in H. simpl in H.
+        inversion H; subst. apply LangCharClassNeg. exact Hcl.
+    + destruct (char_in_list a chars) eqn:Hcl.
+      * simpl in H. rewrite Hcl in H. simpl in H.
+        inversion H; subst. apply LangCharClassPos. exact Hcl.
+      * simpl in H. rewrite Hcl in H. simpl in H. inversion H.
+Qed.
+
+Lemma repeat_promote_zero :
+  forall r m s,
+    lang r [] ->
+    lang (RRepeat r 0 m) s ->
+    lang (RRepeat r 0 (S m)) s.
+Proof.
+  intros r m s Hnil Hrep.
+  change s with ([] ++ s)%list.
+  eapply (LangRepeatStep r 0 (S m) [] s).
+  - exact Hnil.
+  - simpl. replace (m - 0)%nat with m by lia. exact Hrep.
+  - lia.
+Qed.
+
+Lemma cat_promote_repeat :
+  forall r x m s,
+    lang r [] ->
+    lang (RCat x (RRepeat r 0 m)) s ->
+    lang (RCat x (RRepeat r 0 (S m))) s.
+Proof.
+  intros r x m s Hnil Hcat.
+  inversion Hcat; subst.
+  eapply LangCat; eauto.
+  eapply repeat_promote_zero; eauto.
+Qed.
+
+Lemma repeat_promote_succ :
+  forall r lo hi s,
+    lang r [] ->
+    lang (RRepeat r lo hi) s ->
+    lang (RRepeat r (S lo) (S hi)) s.
+Proof.
+  intros r lo hi s Hnil Hrep.
+  change s with ([] ++ s)%list.
+  eapply (LangRepeatStep r (S lo) (S hi) [] s).
+  - exact Hnil.
+  - replace (S lo - 1)%nat with lo by lia.
+    replace (S hi - 1)%nat with hi by lia.
+    exact Hrep.
+  - lia.
+Qed.
+
+Lemma cat_promote_repeat_succ :
+  forall r x lo hi s,
+    lang r [] ->
+    lang (RCat x (RRepeat r lo hi)) s ->
+    lang (RCat x (RRepeat r (S lo) (S hi))) s.
+Proof.
+  intros r x lo hi s Hnil Hcat.
+  inversion Hcat; subst.
+  eapply LangCat; eauto.
+  eapply repeat_promote_succ; eauto.
+Qed.
+
+Lemma repeat_head_cat_with_nullable :
+  forall r a m s,
+    (forall t, lang r (a :: t) -> lang (deriv a r) t) ->
+    lang r [] ->
+    lang (RRepeat r 0 m) (a :: s) ->
+    lang (RCat (deriv a r) (RRepeat r 0 m)) s.
+Proof.
+  intros r a m.
+  induction m as [|m' IH]; intros s Hder Hnil Hrep.
+  - inversion Hrep; subst; try discriminate; lia.
+  - inversion Hrep; subst; simpl in *;
+      try solve [
+        exfalso;
+        repeat match goal with
+        | Heq : [] = _ :: _ |- _ => inversion Heq
+        | Heq : _ :: _ = [] |- _ => inversion Heq
+        | Hgt : (_ > 0)%nat |- _ => lia
+        end
+      ].
+    destruct cs1 as [|c cs1'].
+    + simpl in *.
+      lazymatch goal with
+      | Heq : [] ++ ?rhs = a :: s |- _ =>
+          simpl in Heq; subst rhs
+      | Heq : a :: s = [] ++ ?rhs |- _ =>
+          simpl in Heq; symmetry in Heq; subst rhs
+      | Heq : ?rhs = a :: s |- _ => subst rhs
+      | Heq : a :: s = ?rhs |- _ => symmetry in Heq; subst rhs
+      end.
+      eapply cat_promote_repeat; [exact Hnil |].
+      eapply IH; [exact Hder | exact Hnil |].
+      lazymatch goal with
+      | Hrest : lang (RRepeat r 0 (m' - 0)) (a :: s) |- _ =>
+          replace (m' - 0)%nat with m' in Hrest by lia;
+          exact Hrest
+      | Hrest : lang (RRepeat r 0 m') (a :: s) |- _ =>
+          exact Hrest
+      end.
+    + simpl in *.
+      lazymatch goal with
+      | Heq : (c :: cs1') ++ ?rhs = a :: s |- _ =>
+          inversion Heq; subst; clear Heq
+      | Heq : a :: s = (c :: cs1') ++ ?rhs |- _ =>
+          symmetry in Heq; inversion Heq; subst; clear Heq
+      | Heq : c :: ?rhs = a :: s |- _ =>
+          inversion Heq; subst; clear Heq
+      | Heq : a :: s = c :: ?rhs |- _ =>
+          symmetry in Heq; inversion Heq; subst; clear Heq
+      end.
+      eapply LangCat.
+      * apply Hder. eassumption.
+      * lazymatch goal with
+        | Hrest : lang (RRepeat r 0 (m' - 0)) ?tail |- _ =>
+            replace (m' - 0)%nat with m' in Hrest by lia;
+            eapply repeat_promote_zero; [exact Hnil | exact Hrest]
+        | Hrest : lang (RRepeat r 0 m') ?tail |- _ =>
+            eapply repeat_promote_zero; [exact Hnil | exact Hrest]
+        end.
+Qed.
+
+Lemma repeat_head_cat_with_min_nullable :
+  forall r a lo hi s,
+    (forall t, lang r (a :: t) -> lang (deriv a r) t) ->
+    lang r [] ->
+    lang (RRepeat r lo hi) (a :: s) ->
+    (lo > 0)%nat ->
+    lang (RCat (deriv a r) (RRepeat r (lo - 1) (hi - 1))) s.
+Proof.
+  intros r a lo.
+  induction lo as [|lo' IH]; intros hi s Hder Hnil Hrep Hlo.
+  - lia.
+  - inversion Hrep; subst; simpl in *;
+      try solve [
+        exfalso;
+        repeat match goal with
+        | Heq : [] = _ :: _ |- _ => inversion Heq
+        | Heq : _ :: _ = [] |- _ => inversion Heq
+        | Hgt : (_ > 0)%nat |- _ => lia
+        end
+      ].
+      destruct cs1 as [|c cs1'].
+      * simpl in *.
+        lazymatch goal with
+        | Heq : [] ++ ?rhs = a :: s |- _ =>
+            simpl in Heq; subst rhs
+        | Heq : a :: s = [] ++ ?rhs |- _ =>
+            simpl in Heq; symmetry in Heq; subst rhs
+        | Heq : ?rhs = a :: s |- _ => subst rhs
+        | Heq : a :: s = ?rhs |- _ => symmetry in Heq; subst rhs
+        end.
+        destruct lo' as [|lo''].
+        -- simpl in *.
+           eapply repeat_head_cat_with_nullable; eauto.
+        -- assert (Htail :
+             lang (RCat (deriv a r) (RRepeat r (S lo'' - 1) ((hi - 1) - 1))) s).
+           {
+             eapply IH; [exact Hder | exact Hnil | | lia].
+             lazymatch goal with
+             | Hrest : lang (RRepeat r (S lo'') (hi - 1)) (a :: s) |- _ =>
+                 exact Hrest
+             | Hrest : lang (RRepeat r (S lo'' - 0) (hi - 1)) (a :: s) |- _ =>
+                 replace (S lo'' - 0)%nat with (S lo'') in Hrest by lia;
+                 exact Hrest
+             end.
+           }
+           replace (S lo'' - 1)%nat with lo'' in Htail by lia.
+           assert (Hhi_ge : (S lo'' <= hi - 1)%nat).
+           {
+             destruct (lt_dec (hi - 1) (S lo'')) as [Hlt|Hge].
+             - exfalso.
+               lazymatch goal with
+               | Hrest : lang (RRepeat r (S lo'') (hi - 1)) (a :: s) |- _ =>
+                   eapply (lang_repeat_empty r (S lo'') (hi - 1) (a :: s)); eauto
+               | Hrest : lang (RRepeat r (S lo'' - 0) (hi - 1)) (a :: s) |- _ =>
+                   replace (S lo'' - 0)%nat with (S lo'') in Hrest by lia;
+                   eapply (lang_repeat_empty r (S lo'') (hi - 1) (a :: s)); eauto
+               end.
+             - lia.
+           }
+           assert (Hhi_pos : (hi - 1 > 0)%nat) by lia.
+           replace (S lo'' - 0)%nat with (S lo'') by lia.
+           replace ((hi - 1)%nat) with (S (((hi - 1)%nat - 1)%nat)) by lia.
+           eapply cat_promote_repeat_succ; eauto.
+      * simpl in *.
+        lazymatch goal with
+        | Heq : (c :: cs1') ++ ?rhs = a :: s |- _ =>
+            inversion Heq; subst; clear Heq
+        | Heq : a :: s = (c :: cs1') ++ ?rhs |- _ =>
+            symmetry in Heq; inversion Heq; subst; clear Heq
+        | Heq : c :: ?rhs = a :: s |- _ =>
+            inversion Heq; subst; clear Heq
+        | Heq : a :: s = c :: ?rhs |- _ =>
+            symmetry in Heq; inversion Heq; subst; clear Heq
+        end.
+        eapply LangCat.
+        -- apply Hder. eassumption.
+        -- lazymatch goal with
+           | Hrest : lang (RRepeat r ?lo0 ?hi0) ?tail
+             |- lang (RRepeat r ?log ?hig) ?tail =>
+               replace lo0 with log in Hrest by lia;
+               replace hi0 with hig in Hrest by lia;
+               exact Hrest
+           end.
 Qed.
 
 Lemma deriv_complete : forall a r cs,
@@ -957,62 +1162,123 @@ Proof.
     unfold ascii_eqb. destruct (ascii_dec a a); [apply LangEps | contradiction].
   - inversion H; subst. apply LangEps.
   - inversion H; subst.
-    + apply LangAltL. apply IHr1. exact H2.
-    + apply LangAltR. apply IHr2. exact H2.
+    + apply LangAltL. eapply IHr1. eassumption.
+    + apply LangAltR. eapply IHr2. eassumption.
   - inversion H; subst.
     destruct (nullable r1) eqn:Hnull.
     + destruct cs1 as [| a' cs1'].
-      * simpl in H0. subst.
-        apply LangAltR. apply IHr2. exact H4.
-      * simpl in H0. inversion H0; subst.
-        apply LangAltL. apply LangCat; [apply IHr1; exact H3 | exact H4].
+      * simpl in *. subst.
+        apply LangAltR. eapply IHr2. eassumption.
+      * simpl in *.
+        lazymatch goal with
+        | Heq : (_ :: _) ++ _ = _ :: _ |- _ =>
+            inversion Heq; subst; clear Heq
+        | Heq : _ :: _ = _ :: _ |- _ =>
+            inversion Heq; subst; clear Heq
+        end.
+        apply LangAltL. apply LangCat; [eapply IHr1; eassumption | eassumption].
     + destruct cs1 as [| a' cs1'].
       * exfalso. apply (Bool.diff_false_true).
-        rewrite <- Hnull. apply nullable_complete. exact H3.
-      * simpl in H0. inversion H0; subst.
-        apply LangCat; [apply IHr1; exact H3 | exact H4].
+        rewrite <- Hnull. eapply nullable_complete. eassumption.
+      * simpl in *.
+        lazymatch goal with
+        | Heq : (_ :: _) ++ _ = _ :: _ |- _ =>
+            inversion Heq; subst; clear Heq
+        | Heq : _ :: _ = _ :: _ |- _ =>
+            inversion Heq; subst; clear Heq
+        end.
+        apply LangCat; [eapply IHr1; eassumption | eassumption].
   - inversion H; subst.
     destruct cs1 as [| a' cs1']; [contradiction | ].
-    simpl in H1. inversion H1; subst.
-    apply LangCat; [apply IHr; exact H4 | exact H5].
+    simpl in *.
+    lazymatch goal with
+    | Heq : (_ :: _) ++ _ = _ :: _ |- _ =>
+        inversion Heq; subst; clear Heq
+    | Heq : _ :: _ = _ :: _ |- _ =>
+        inversion Heq; subst; clear Heq
+    end.
+    apply LangCat.
+    + lazymatch goal with
+      | Hd : lang r (_ :: _) |- _ => eapply IHr; exact Hd
+      end.
+    + lazymatch goal with
+      | Hs : lang (RStar r) _ |- _ => exact Hs
+      end.
   - inversion H; subst.
     destruct cs1 as [| a' cs1'].
-    + simpl in H0. subst.
+    + simpl in *. subst.
       (* lang (RStar r) (a :: cs) *)
-      inversion H4; subst.
-      * discriminate.
-      * destruct cs1; [contradiction | ].
-        simpl in H0. inversion H0; subst.
-        apply LangCat; [apply IHr; exact H6 | exact H7].
-    + simpl in H0. inversion H0; subst.
-      apply LangCat; [apply IHr; exact H3 | exact H4].
-  - inversion H; subst. apply IHr. exact H2.
+      lazymatch goal with
+      | Hstar : lang (RStar r) (_ :: _) |- _ =>
+          inversion Hstar; subst; clear Hstar
+      end.
+      all: try solve [discriminate | congruence | contradiction].
+      destruct cs1; [contradiction | ].
+      simpl in *.
+      lazymatch goal with
+      | Heq : (_ :: _) ++ _ = _ :: _ |- _ =>
+          inversion Heq; subst; clear Heq
+      | Heq : _ :: _ = _ :: _ |- _ =>
+          inversion Heq; subst; clear Heq
+      end.
+      apply LangCat.
+      -- lazymatch goal with
+         | Hd : lang r (_ :: _) |- _ => eapply IHr; exact Hd
+         end.
+      -- lazymatch goal with
+         | Hs : lang (RStar r) _ |- _ => exact Hs
+         end.
+    + simpl in *.
+      lazymatch goal with
+      | Heq : (_ :: _) ++ _ = _ :: _ |- _ =>
+          inversion Heq; subst; clear Heq
+      | Heq : _ :: _ = _ :: _ |- _ =>
+          inversion Heq; subst; clear Heq
+      end.
+      apply LangCat; [eapply IHr; eassumption | eassumption].
+  - inversion H; subst. eapply IHr. eassumption.
   - destruct (Nat.eqb min 0) eqn:Hmin.
     + destruct (Nat.eqb max 0) eqn:Hmax.
       * apply Nat.eqb_eq in Hmin. apply Nat.eqb_eq in Hmax. subst.
-        inversion H; subst.
-        -- discriminate.
-        -- lia.
+        inversion H; subst; lia.
       * inversion H; subst.
-        -- discriminate.
-        -- apply LangAltL.
-           destruct cs1 as [| a' cs1'].
-           ++ simpl in H0. subst.
-              apply Nat.eqb_eq in Hmin. subst.
-              apply LangCat; [apply IHr; exact H3 | exact H4].
-           ++ simpl in H0. inversion H0; subst.
-              apply LangCat; [apply IHr; exact H3 | exact H4].
-    + inversion H; subst.
-      * apply Nat.eqb_neq in Hmin. lia.
+        apply Nat.eqb_eq in Hmin. subst.
+        simpl in *.
+        apply LangAltL.
+        destruct cs1 as [| a' cs1'].
+        -- simpl in *. subst.
+           eapply repeat_head_cat_with_nullable; eauto.
+        -- simpl in *.
+           lazymatch goal with
+           | Heq : (_ :: _) ++ _ = _ :: _ |- _ =>
+               inversion Heq; subst; clear Heq
+           | Heq : _ :: _ = _ :: _ |- _ =>
+               inversion Heq; subst; clear Heq
+           end.
+           apply LangCat; [eapply IHr; eassumption | eassumption].
+    + inversion H; subst; simpl in *;
+        try solve [
+          exfalso;
+          apply Nat.eqb_neq in Hmin;
+          apply Hmin; reflexivity
+        ].
+      destruct (Nat.ltb max min) eqn:Hlt.
+      * exfalso.
+        apply Nat.ltb_lt in Hlt.
+        eapply (lang_repeat_empty r min max (a :: cs)); eauto.
       * destruct cs1 as [| a' cs1'].
-        -- simpl in H0. subst.
-           exfalso. apply Nat.eqb_neq in Hmin.
-           assert (nullable r = true) by (apply nullable_complete; exact H3).
-           (* We need lang (RRepeat r (min-1) (max-1)) (a :: cs)
-              but we derived from cs1 = [] so the a :: cs comes from cs2 *)
-           apply LangCat; [apply IHr; exact H3 | exact H4].
-        -- simpl in H0. inversion H0; subst.
-           apply LangCat; [apply IHr; exact H3 | exact H4].
+        -- simpl in *. subst.
+           apply Nat.eqb_neq in Hmin.
+           eapply repeat_head_cat_with_min_nullable; eauto.
+           lia.
+        -- simpl in *.
+           lazymatch goal with
+           | Heq : (_ :: _) ++ _ = _ :: _ |- _ =>
+               inversion Heq; subst; clear Heq
+           | Heq : _ :: _ = _ :: _ |- _ =>
+               inversion Heq; subst; clear Heq
+           end.
+           apply LangCat; [eapply IHr; eassumption | eassumption].
   - destruct neg.
     + inversion H; subst.
       simpl. rewrite H2. apply LangEps.
@@ -1020,44 +1286,116 @@ Proof.
       simpl. rewrite H2. apply LangEps.
 Qed.
 
+Lemma lang_star_map :
+  forall r s cs,
+    (forall t, lang s t -> lang r t) ->
+    lang (RStar s) cs ->
+    lang (RStar r) cs.
+Proof.
+  intros r s cs Hmap Hstar.
+  remember (RStar s) as rs eqn:Hrs.
+  revert s Hmap Hrs.
+  induction Hstar; intros s0 Hmap Hrs; inversion Hrs; subst; clear Hrs.
+  - apply LangStarNil.
+  - apply LangStarCons.
+    + assumption.
+    + apply Hmap.
+      lazymatch goal with
+      | Hs : lang s0 _ |- _ => exact Hs
+      end.
+    + eapply IHHstar2; eauto.
+Qed.
+
+Lemma lang_plus_map :
+  forall r s cs,
+    (forall t, lang s t -> lang r t) ->
+    lang (RPlus s) cs ->
+    lang (RPlus r) cs.
+Proof.
+  intros r s cs Hmap Hplus.
+  inversion Hplus; subst.
+  apply LangPlus.
+  - apply Hmap.
+    lazymatch goal with
+    | Hs : lang s _ |- _ => exact Hs
+    end.
+  - eapply lang_star_map.
+    + exact Hmap.
+    + lazymatch goal with
+      | Hst : lang (RStar s) _ |- _ => exact Hst
+      end.
+Qed.
+
+Lemma lang_repeat_map :
+  forall r s min max cs,
+    (forall t, lang s t -> lang r t) ->
+    lang (RRepeat s min max) cs ->
+    lang (RRepeat r min max) cs.
+Proof.
+  intros r s min max cs Hmap Hrep.
+  remember (RRepeat s min max) as rr eqn:Hrr.
+  revert s min max Hmap Hrr.
+  induction Hrep; intros s0 min0 max0 Hmap Hrr;
+    inversion Hrr; subst; clear Hrr; try discriminate.
+  - apply LangRepeatNil.
+  - apply LangRepeatStep.
+    + apply Hmap. assumption.
+    + eauto.
+    + assumption.
+Qed.
+
 (** rsimpl preserves language equivalence. *)
 Lemma rsimpl_sound : forall r cs, lang (rsimpl r) cs -> lang r cs.
 Proof.
   induction r; intros cs H; simpl in H; try exact H.
   - (* RAlt *)
-    destruct (rsimpl r1) eqn:Hr1; destruct (rsimpl r2) eqn:Hr2;
-      try (inversion H; subst;
-        [apply LangAltL; apply IHr1; rewrite Hr1; exact H2
-        |apply LangAltR; apply IHr2; rewrite Hr2; exact H2]);
-      try (apply LangAltR; apply IHr2; rewrite Hr2; exact H);
-      try (apply LangAltL; apply IHr1; rewrite Hr1; exact H).
+    remember (rsimpl r1) as r1' eqn:Hr1.
+    remember (rsimpl r2) as r2' eqn:Hr2.
+    destruct r1'; simpl in H;
+      try (destruct r2'; simpl in H;
+           try (inversion H; subst;
+                [apply LangAltL; apply IHr1; eassumption
+                |apply LangAltR; apply IHr2; eassumption]);
+           apply LangAltL; apply IHr1; exact H);
+      try (apply LangAltR; apply IHr2; exact H).
   - (* RCat *)
-    destruct (rsimpl r1) eqn:Hr1; destruct (rsimpl r2) eqn:Hr2;
-      try (inversion H; subst;
-        apply LangCat; [apply IHr1; rewrite Hr1; exact H3
-                       | apply IHr2; rewrite Hr2; exact H5]);
-      try inversion H;
-      try (change (cs) with ([] ++ cs)%list;
-           apply LangCat; [apply IHr1; rewrite Hr1; apply LangEps
-                          | apply IHr2; rewrite Hr2; exact H]);
-      try (change (cs) with (cs ++ [])%list;
-           rewrite <- app_nil_r;
-           apply LangCat; [apply IHr1; rewrite Hr1; exact H
-                          | apply IHr2; rewrite Hr2; apply LangEps]).
+    remember (rsimpl r1) as r1' eqn:Hr1.
+    remember (rsimpl r2) as r2' eqn:Hr2.
+    destruct r1'; destruct r2'; simpl in H;
+      try solve [inversion H];
+      try solve [
+        inversion H; subst;
+        apply LangCat; [apply IHr1; eassumption
+                       |apply IHr2; eassumption]
+      ];
+      try solve [
+        replace cs with ([] ++ cs)%list by reflexivity;
+        apply LangCat; [apply IHr1; apply LangEps
+                       |apply IHr2; exact H]
+      ];
+      try solve [
+        rewrite <- app_nil_r with (l:=cs);
+        apply LangCat; [apply IHr1; exact H
+                       |apply IHr2; apply LangEps]
+      ].
   - (* RStar *)
-    destruct (rsimpl r) eqn:Hr;
-      try (inversion H; subst;
-        [apply LangStarNil
-        |apply LangStarCons; [exact H2 | apply IHr; rewrite Hr; exact H4 | exact H5]]);
-      try (inversion H; subst; apply LangStarNil).
+    destruct (rsimpl r) eqn:Hr; simpl in H;
+      try (inversion H; subst; apply LangStarNil);
+      try (eapply lang_star_map;
+           [intros t Ht; apply IHr; exact Ht
+           |exact H]).
   - (* RPlus *)
-    destruct (rsimpl r) eqn:Hr;
-      try (inversion H; subst;
-        apply LangPlus; [apply IHr; rewrite Hr; exact H3 | exact H5]);
-      try inversion H.
+    destruct (rsimpl r) eqn:Hr; simpl in H;
+      try solve [inversion H].
+    all: inversion H; subst;
+      apply LangPlus;
+      [apply IHr; eassumption
+      |eapply lang_star_map;
+         [intros t Ht; apply IHr; exact Ht
+         |eassumption]].
   - (* ROpt *)
     inversion H; subst.
-    + apply LangOpt. apply IHr. exact H2.
+    + apply LangOpt. apply IHr. eassumption.
     + apply LangOptNil.
   - (* RRepeat *)
     destruct (Nat.ltb max min) eqn:Hlt.
@@ -1065,12 +1403,69 @@ Proof.
     + destruct (Nat.eqb min 0) eqn:Hmin.
       * destruct (Nat.eqb max 0) eqn:Hmax.
         -- inversion H; subst. apply Nat.eqb_eq in Hmin. subst. apply LangRepeatNil.
-        -- inversion H; subst.
-           ++ apply Nat.eqb_eq in Hmin. subst. apply LangRepeatNil.
-           ++ apply LangRepeatStep; [apply IHr; exact H3 | exact H4 | exact H5].
-      * inversion H; subst.
-        -- apply Nat.eqb_neq in Hmin. lia.
-        -- apply LangRepeatStep; [apply IHr; exact H3 | exact H4 | exact H5].
+        -- eapply lang_repeat_map.
+           ++ intros t Ht. apply IHr. exact Ht.
+           ++ exact H.
+      * eapply lang_repeat_map.
+        -- intros t Ht. apply IHr. exact Ht.
+        -- exact H.
+Qed.
+
+Lemma lang_alt_left_complete : forall r1 r2 cs,
+  lang r1 cs ->
+  lang (match r1, r2 with
+        | REmpty, _ => r2
+        | _, REmpty => r1
+        | _, _ => RAlt r1 r2
+        end) cs.
+Proof.
+  intros r1 r2 cs H.
+  destruct r1; destruct r2; simpl in *;
+    try exact H;
+    try (apply LangAltL; exact H);
+    inversion H.
+Qed.
+
+Lemma lang_alt_right_complete : forall r1 r2 cs,
+  lang r2 cs ->
+  lang (match r1, r2 with
+        | REmpty, _ => r2
+        | _, REmpty => r1
+        | _, _ => RAlt r1 r2
+        end) cs.
+Proof.
+  intros r1 r2 cs H.
+  destruct r1; destruct r2; simpl in *;
+    try exact H;
+    try (apply LangAltR; exact H);
+    inversion H.
+Qed.
+
+Lemma lang_cat_complete_step : forall r1 r2 cs1 cs2,
+  lang r1 cs1 ->
+  lang r2 cs2 ->
+  lang (match r1, r2 with
+        | REmpty, _ => REmpty
+        | _, REmpty => REmpty
+        | REps, _ => r2
+        | _, REps => r1
+        | _, _ => RCat r1 r2
+        end) (cs1 ++ cs2).
+Proof.
+  intros r1 r2 cs1 cs2 H1 H2.
+  destruct r1; destruct r2; simpl in *.
+  all: try (exfalso; match goal with Hbad : lang REmpty _ |- _ => inversion Hbad end).
+  all: try (apply LangCat; [exact H1 | exact H2]).
+  all: try (
+    match goal with
+    | Heps : lang REps _ |- _ =>
+        inversion Heps; subst; simpl in *; exact H2
+    end).
+  all: try (
+    match goal with
+    | Heps : lang REps _ |- _ =>
+        inversion Heps; subst; simpl in *; rewrite app_nil_r; exact H1
+    end).
 Qed.
 
 Lemma rsimpl_complete : forall r cs, lang r cs -> lang (rsimpl r) cs.
@@ -1078,48 +1473,62 @@ Proof.
   induction r; intros cs H; simpl; try exact H.
   - (* RAlt *)
     inversion H; subst.
-    + specialize (IHr1 _ H2).
-      destruct (rsimpl r1); destruct (rsimpl r2);
-        try (apply LangAltL; exact IHr1); exact IHr1.
-    + specialize (IHr2 _ H2).
-      destruct (rsimpl r1); destruct (rsimpl r2);
-        try (apply LangAltR; exact IHr2); exact IHr2.
+    + remember (rsimpl r1) as r1' eqn:Hr1.
+      remember (rsimpl r2) as r2' eqn:Hr2.
+      assert (H1s : lang r1' cs).
+      { apply IHr1. assumption. }
+      simpl.
+      apply lang_alt_left_complete. exact H1s.
+    + remember (rsimpl r1) as r1' eqn:Hr1.
+      remember (rsimpl r2) as r2' eqn:Hr2.
+      assert (H2s : lang r2' cs).
+      { apply IHr2. assumption. }
+      simpl.
+      apply lang_alt_right_complete. exact H2s.
   - (* RCat *)
     inversion H; subst.
-    specialize (IHr1 _ H3). specialize (IHr2 _ H5).
-    destruct (rsimpl r1) eqn:Hr1; destruct (rsimpl r2) eqn:Hr2;
-      try (apply LangCat; [exact IHr1 | exact IHr2]);
-      try inversion IHr1;
-      try inversion IHr2;
-      try (subst; rewrite app_nil_r; exact IHr2);
-      try (subst; simpl; exact IHr1).
-    + subst. inversion IHr1; subst. simpl. exact IHr2.
-    + inversion IHr2; subst. rewrite app_nil_r. exact IHr1.
+    match goal with
+    | Hleft : lang r1 ?cs1,
+      Hright : lang r2 ?cs2 |- _ =>
+        pose proof (IHr1 _ Hleft) as H1s;
+        pose proof (IHr2 _ Hright) as H2s;
+        simpl;
+        eapply lang_cat_complete_step; [exact H1s | exact H2s]
+    end.
   - (* RStar *)
-    inversion H; subst.
-    + destruct (rsimpl r); try apply LangStarNil; apply LangEps.
-    + specialize (IHr _ H4).
-      destruct (rsimpl r) eqn:Hr;
-        try (apply LangStarCons; [exact H2 | exact IHr | exact H5]);
-        try inversion IHr.
-      * subst. contradiction.
-      * subst. contradiction.
+    assert (Hmap : lang (RStar (rsimpl r)) cs).
+    { eapply lang_star_map.
+      - intros t Ht. apply IHr. exact Ht.
+      - exact H.
+    }
+    destruct (rsimpl r) eqn:Hr; simpl in *; try exact Hmap.
+    + inversion Hmap; subst.
+      * apply LangEps.
+      * match goal with
+        | Hbad : lang REmpty _ |- _ => inversion Hbad
+        end.
+    + inversion Hmap; subst.
+      * apply LangEps.
+      * match goal with
+        | Hne : ?x <> [], Heps : lang REps ?x |- _ =>
+            inversion Heps; subst; contradiction
+        end.
   - (* RPlus *)
-    inversion H; subst.
-    specialize (IHr _ H3).
-    destruct (rsimpl r) eqn:Hr;
-      try (apply LangPlus; [exact IHr | exact H5]);
-      try inversion IHr.
+    pose proof (lang_plus_map (rsimpl r) r cs
+      (fun t Ht => IHr _ Ht) H) as Hplus_simpl.
+    destruct (rsimpl r) eqn:Hr; simpl in *; try exact Hplus_simpl.
+    inversion Hplus_simpl; subst.
+    match goal with
+    | Hbad : lang REmpty _ |- _ => inversion Hbad
+    end.
   - (* ROpt *)
     inversion H; subst.
-    + apply LangOpt. apply IHr. exact H2.
+    + apply LangOpt. apply IHr. assumption.
     + apply LangOptNil.
   - (* RRepeat *)
     destruct (Nat.ltb max min) eqn:Hlt.
     + apply Nat.ltb_lt in Hlt.
-      inversion H; subst.
-      * lia.
-      * lia.
+      exfalso. eapply lang_repeat_empty; eauto.
     + destruct (Nat.eqb min 0) eqn:Hmin.
       * destruct (Nat.eqb max 0) eqn:Hmax.
         -- apply Nat.eqb_eq in Hmin. apply Nat.eqb_eq in Hmax. subst.
@@ -1128,10 +1537,20 @@ Proof.
            ++ lia.
         -- inversion H; subst.
            ++ apply LangRepeatNil.
-           ++ apply LangRepeatStep; [apply IHr; exact H3 | exact H4 | exact H5].
+           ++ eapply LangRepeatStep.
+              ** apply IHr. eassumption.
+              ** eapply lang_repeat_map.
+                 --- intros t Ht. apply IHr. exact Ht.
+                 --- eassumption.
+              ** eassumption.
       * inversion H; subst.
         -- apply Nat.eqb_neq in Hmin. lia.
-        -- apply LangRepeatStep; [apply IHr; exact H3 | exact H4 | exact H5].
+        -- eapply LangRepeatStep.
+           ++ apply IHr. eassumption.
+           ++ eapply lang_repeat_map.
+              ** intros t Ht. apply IHr. exact Ht.
+              ** eassumption.
+           ++ eassumption.
 Qed.
 
 (** matches_from correctness: matches_from r cs = true <-> lang r cs. *)
