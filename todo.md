@@ -13,6 +13,6 @@
 11. Formalize the RFC 9535 ABNF grammar as an inductive or parser type.
 12. Implement a JSONPath string parser producing the existing AST.
 13. Prove the parser correct against the ABNF grammar.
-14. Ensure all QuickChick properties pass, fix any failures, and extend coverage to the newly-proved filter and descendant equivalences.
-15. Add a `_CoqProject` file and Makefile for reproducible builds.
-16. Split the single file into per-module files gated by the build system.
+14. Ensure all QuickChick properties pass, fix any failures, and extend coverage to the newly-proved filter and descendant equivalences. **Status:** core property suite passes (10,000 tests each) via `quickchick_run.v`.
+15. Add a `_CoqProject` file and Makefile for reproducible builds. **Status:** done.
+16. Split the single file into per-module files gated by the build system. **Status:** intentionally deferred; repository is currently kept monolithic by request.
