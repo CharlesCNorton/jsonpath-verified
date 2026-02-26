@@ -20,7 +20,7 @@ regen:
 	$(COQMAKEFILE_TOOL) -f $(COQPROJECT) -o $(COQMAKEFILE)
 
 proof-hygiene:
-	@$(PYTHON) proof_hygiene.py
+	@$(PYTHON) scripts/proof_hygiene.py
 
 clean: $(COQMAKEFILE)
 	$(MAKE) -f $(COQMAKEFILE) COQBIN="$(COQBIN)" clean

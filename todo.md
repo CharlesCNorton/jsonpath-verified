@@ -3,7 +3,7 @@
 ## Completed
 
 1. Add a `_CoqProject` file and Makefile for reproducible builds. **Status:** done.
-2. Split the single file into per-module files gated by the build system. **Status:** done via `JPV_Core.v`, `JPV_Formalization.v`, `JPV_Extensions.v`, `JPV_API_Extraction.v`, with facade `jsonpath_verified.v`.
+2. Split the single file into per-module files gated by the build system. **Status:** done via `theories/JPV_Core.v`, `theories/JPV_Formalization.v`, `theories/JPV_Extensions.v`, `theories/JPV_API_Extraction.v`, with facade `theories/jsonpath_verified.v`.
 
 ## RFC Completeness (Closed)
 
@@ -47,4 +47,4 @@
    `closure_direct_aeval_acount_reflection_child_only`,
    `closure_direct_holds_exists_reflection_child_only`,
    `closure_direct_holds_cmp_aprim_reflection`.
-2. Eliminate non-fatal proof/build warning debt (deprecated notations, non-recursive fixpoints, parser-comment warning, extraction warning). **Status:** done via warning-clean edits in `JPV_Core.v`, `JPV_Formalization.v`, `JPV_Extensions.v`, and `JPV_API_Extraction.v`; raw 8.20 compile now emits no warnings.
+2. Eliminate non-fatal proof/build warning debt (deprecated notations, non-recursive fixpoints, parser-comment warning, extraction warning). **Status:** done via warning-clean edits in `theories/JPV_Core.v`, `theories/JPV_Formalization.v`, `theories/JPV_Extensions.v`, and `theories/JPV_API_Extraction.v`; raw 8.20 compile now emits no warnings.

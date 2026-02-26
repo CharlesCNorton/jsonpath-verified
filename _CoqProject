@@ -1,5 +1,6 @@
-JPV_Core.v
-JPV_Formalization.v
-JPV_Extensions.v
-JPV_API_Extraction.v
-jsonpath_verified.v
+-Q theories ""
+theories/JPV_Core.v
+theories/JPV_Formalization.v
+theories/JPV_Extensions.v
+theories/JPV_API_Extraction.v
+theories/jsonpath_verified.v

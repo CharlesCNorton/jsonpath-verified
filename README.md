@@ -4,20 +4,20 @@ Mechanized JSONPath (RFC 9535) semantics in Coq/Rocq, with executable evaluators
 
 ## Repository layout
 
-- `JPV_Core.v`: base data model, JSONPath AST, slice/index machinery, regex engine, relational semantics, executable semantics, and core soundness/completeness bridges.
-- `JPV_Formalization.v`: higher-level equivalence and closure theorems, unrestricted direct reflection modules, typing layers (`Typing`, `TypingPrecise`), and extensive semantic invariants/regressions.
-- `JPV_Extensions.v`: Unicode model and conversion lemmas, ABNF relations and parsers (token-level and concrete surface), lexer, parser correctness theorems, and property suites.
-- `JPV_API_Extraction.v`: user-facing API modules (`API`, `UnicodeAPI`) plus extraction directives.
-- `jsonpath_verified.v`: facade that re-exports all modules above.
-- `quickchick_run.v`: QuickChick entry file.
-- `proof_hygiene.py`: guard that rejects `Admitted` and `Axiom`.
+- `theories/JPV_Core.v`: base data model, JSONPath AST, slice/index machinery, regex engine, relational semantics, executable semantics, and core soundness/completeness bridges.
+- `theories/JPV_Formalization.v`: higher-level equivalence and closure theorems, unrestricted direct reflection modules, typing layers (`Typing`, `TypingPrecise`), and extensive semantic invariants/regressions.
+- `theories/JPV_Extensions.v`: Unicode model and conversion lemmas, ABNF relations and parsers (token-level and concrete surface), lexer, parser correctness theorems, and property suites.
+- `theories/JPV_API_Extraction.v`: user-facing API modules (`API`, `UnicodeAPI`) plus extraction directives.
+- `theories/jsonpath_verified.v`: facade that re-exports all modules above.
+- `tests/quickchick_run.v`: QuickChick entry file.
+- `scripts/proof_hygiene.py`: guard that rejects `Admitted` and `Axiom`.
 - `_CoqProject`, `Makefile`: build configuration.
 
 ## What is formalized
 
 ### JSON and JSONPath core
 
-`JPV_Core.v` defines:
+`theories/JPV_Core.v` defines:
 
 - JSON values: null, bool, rational numbers (`Q`), strings, arrays, objects.
 - Paths and nodes (`path * value`) with normalized step/path predicates.
@@ -60,7 +60,7 @@ Relational wrappers and bridges are provided via:
 
 ## Proof landscape
 
-`JPV_Formalization.v` provides:
+`theories/JPV_Formalization.v` provides:
 
 - full query/segment/selector executable-relational correspondence theorems.
 - order and permutation transfer theorems over unrestricted and child-only fragments.
@@ -72,7 +72,7 @@ Relational wrappers and bridges are provided via:
 
 ## Unicode, grammar, and concrete parsing
 
-`JPV_Extensions.v` adds:
+`theories/JPV_Extensions.v` adds:
 
 - Unicode model (`codepoint`, `ustring`) and validity predicates.
 - Unicode JSON/JSONPath/Regex/Exec layers.
@@ -86,7 +86,7 @@ Relational wrappers and bridges are provided via:
 
 ## API surface
 
-`JPV_API_Extraction.v` exports:
+`theories/JPV_API_Extraction.v` exports:
 
 - `API` (ASCII JSONPath/JSON):
   - `eval_checked`
@@ -99,7 +99,7 @@ Relational wrappers and bridges are provided via:
 
 ## Property suites
 
-`PropertySuite` (in `JPV_Extensions.v`) includes:
+`PropertySuite` (in `theories/JPV_Extensions.v`) includes:
 
 - core invariants for linearity, wildcard cardinality, and descendant superset behavior.
 - regex `search`/`match` consistency checks.
@@ -132,16 +132,16 @@ make proof-hygiene
 Raw compilation order (no filtering):
 
 ```bash
-coqc -q JPV_Core.v
-coqc -q JPV_Formalization.v
-coqc -q JPV_Extensions.v
-coqc -q JPV_API_Extraction.v
-coqc -q jsonpath_verified.v
+coqc -q -Q theories "" theories/JPV_Core.v
+coqc -q -Q theories "" theories/JPV_Formalization.v
+coqc -q -Q theories "" theories/JPV_Extensions.v
+coqc -q -Q theories "" theories/JPV_API_Extraction.v
+coqc -q -Q theories "" theories/jsonpath_verified.v
 ```
 
 ## Extraction
 
-Compiling `JPV_API_Extraction.v` runs extraction directives and emits OCaml modules for:
+Compiling `theories/JPV_API_Extraction.v` runs extraction directives and emits OCaml modules for:
 
 - `JSON`
 - `JSONPath`

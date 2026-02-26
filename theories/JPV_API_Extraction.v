@@ -540,8 +540,9 @@ End UnicodeAPI.
 (* QuickChick section                                            *)
 (* ------------------------------------------------------------ *)
 (* This monolithic file is kept free of QuickChick dependencies
-   so that raw `coqc -q jsonpath_verified.v` works in a base Rocq/Coq
-   install. Property-based tests live in `quickchick_run.v`. *)
+   so that raw `coqc -q -Q theories "" theories/jsonpath_verified.v` works
+   in a base Rocq/Coq
+   install. Property-based tests live in `tests/quickchick_run.v`. *)
 
 (* ------------------------------------------------------------ *)
 (* OCaml Extraction                                             *)
