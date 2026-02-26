@@ -2775,6 +2775,104 @@ Definition prop_desc_superset_wildcard : bool :=
        subset_paths child_paths desc_paths)
     sample_values.
 
+Definition stress_doc : JSON.value :=
+  JSON.JObject
+    [ ("store",
+       JSON.JObject
+         [ ("book",
+            JSON.JArr
+              [ JSON.JObject [("category", JSON.JStr "reference"); ("author", JSON.JStr "Nigel"); ("price", JSON.JNum 8)]
+              ; JSON.JObject [("category", JSON.JStr "fiction"); ("author", JSON.JStr "Evelyn"); ("price", JSON.JNum 12)]
+              ; JSON.JObject [("category", JSON.JStr "fiction"); ("author", JSON.JStr "Herman"); ("price", JSON.JNum 8)]
+              ])
+         ; ("bicycle", JSON.JObject [("color", JSON.JStr "red"); ("price", JSON.JNum 19)])
+         ])
+    ; ("expensive", JSON.JNum 10)
+    ].
+
+Definition stress_nums : JSON.value :=
+  JSON.JArr [JSON.JNum 1; JSON.JNum 12; JSON.JNum 8; JSON.JNum (-3); JSON.JNum 0].
+
+Definition stress_strs : JSON.value :=
+  JSON.JArr [JSON.JStr "Nigel"; JSON.JStr "Bob"; JSON.JStr "Helen"; JSON.JStr "X"; JSON.JStr ""].
+
+Definition surface_eval_case : Type := ((string * JSON.value) * list JSON.node)%type.
+
+Definition surface_eval_vectors : list surface_eval_case :=
+  [ ("$", stress_doc, [([], stress_doc)])
+  ; ("$.expensive", stress_doc,
+      [([JSON.SName "expensive"], JSON.JNum 10)])
+  ; ("$.store.book[0].author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")])
+  ; ("$.store.book[-1].author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")])
+  ; ("$.store.book[1:3].price", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "price"], JSON.JNum 12)
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "price"], JSON.JNum 8)])
+  ; ("$..author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "author"], JSON.JStr "Evelyn")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")])
+  ; ("$..book[*].author", stress_doc,
+      [([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 0; JSON.SName "author"], JSON.JStr "Nigel")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 1; JSON.SName "author"], JSON.JStr "Evelyn")
+      ;([JSON.SName "store"; JSON.SName "book"; JSON.SIndex 2; JSON.SName "author"], JSON.JStr "Herman")])
+  ; ("$[?(cmp(gt,value,10))]", stress_nums,
+      [([JSON.SIndex 1], JSON.JNum 12)])
+  ; ("$[?(cmp(eq,value,8))]", stress_nums,
+      [([JSON.SIndex 2], JSON.JNum 8)])
+  ; ("$[?(or(cmp(eq,value,1),cmp(eq,value,12)))]", stress_nums,
+      [([JSON.SIndex 0], JSON.JNum 1)
+      ;([JSON.SIndex 1], JSON.JNum 12)])
+  ; ("$[?(not(cmp(eq,value,1)))]", stress_nums,
+      [([JSON.SIndex 1], JSON.JNum 12)
+      ;([JSON.SIndex 2], JSON.JNum 8)
+      ;([JSON.SIndex 3], JSON.JNum (-3))
+      ;([JSON.SIndex 4], JSON.JNum 0)])
+  ; ("$[?(match(value,any))]", stress_strs,
+      [([JSON.SIndex 3], JSON.JStr "X")])
+  ; ("$[?(search(value,any))]", stress_strs,
+      [([JSON.SIndex 0], JSON.JStr "Nigel")
+      ;([JSON.SIndex 1], JSON.JStr "Bob")
+      ;([JSON.SIndex 2], JSON.JStr "Helen")
+      ;([JSON.SIndex 3], JSON.JStr "X")])
+  ; ("$[?(search(value,eps))]", stress_strs,
+      [([JSON.SIndex 0], JSON.JStr "Nigel")
+      ;([JSON.SIndex 1], JSON.JStr "Bob")
+      ;([JSON.SIndex 2], JSON.JStr "Helen")
+      ;([JSON.SIndex 3], JSON.JStr "X")
+      ;([JSON.SIndex 4], JSON.JStr "")])
+  ].
+
+Definition run_surface_eval_case (c:surface_eval_case) : bool :=
+  let '((s, J), expected) := c in
+  match JSONPathABNF.parse_surface_query_string (Unicode.string_to_ustring s) with
+  | JSONPathABNF.SurfaceParseOk q =>
+      nodes_eqb (Exec.eval_exec q J) expected
+  | _ => false
+  end.
+
+Definition prop_surface_eval_vectors : bool :=
+  forallb run_surface_eval_case surface_eval_vectors.
+
+Definition surface_parse_error_vectors : list string :=
+  [ "$.store.book[?@.price > 10].author"
+  ; "$[?(cmp(gt,@,10))]"
+  ].
+
+Definition run_surface_error_case (s:string) : bool :=
+  match JSONPathABNF.parse_surface_query_string (Unicode.string_to_ustring s) with
+  | JSONPathABNF.SurfaceParseOk _ => false
+  | _ => true
+  end.
+
+Definition prop_surface_parse_error_vectors : bool :=
+  forallb run_surface_error_case surface_parse_error_vectors.
+
+Definition quickchick_surface_stress_suite : bool :=
+  prop_surface_eval_vectors &&
+  prop_surface_parse_error_vectors.
+
 Definition quickchick_core_suite : bool :=
   prop_linear_len_le1 &&
   prop_wildcard_object_length &&
@@ -2785,7 +2883,8 @@ Definition quickchick_core_suite : bool :=
 Definition quickchick_extended_suite : bool :=
   quickchick_core_suite &&
   prop_filter_search_match_equiv &&
-  prop_desc_superset_wildcard.
+  prop_desc_superset_wildcard &&
+  quickchick_surface_stress_suite.
 
 Theorem quickchick_extended_suite_passes :
   quickchick_extended_suite = true.

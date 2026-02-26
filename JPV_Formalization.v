@@ -4228,6 +4228,32 @@ Proof.
     constructor.
 Qed.
 
+Lemma closure_child_only_eval_singleton_nf :
+  forall q v n,
+    JSONPath_Equiv.query_child_only q = true ->
+    eval q v [n] ->
+    Exec.eval_exec_nf q v = [n].
+Proof.
+  intros q v n Hco Hev.
+  pose proof (child_only_end_to_end_equiv q v [n] Hco Hev) as Hperm.
+  apply permutation_singleton with (x:=n).
+  exact Hperm.
+Qed.
+
+Lemma closure_child_only_eval_exec_singleton_rel :
+  forall q v n,
+    JSONPath_Equiv.query_child_only q = true ->
+    Exec.eval_exec q v = [n] ->
+    eval q v [n].
+Proof.
+  intros q v n Hco Hexec.
+  pose proof (closure_eval_exec_child_only_eq_nf q v Hco) as Heq.
+  rewrite Heq in Hexec.
+  pose proof (eval_exec_nf_sound q v Hco) as Hsound.
+  rewrite Hexec in Hsound.
+  exact Hsound.
+Qed.
+
 Theorem closure_direct_aeval_acount_reflection_child_only :
   forall q v p,
     JSONPath_Equiv.query_child_only q = true ->
@@ -4255,6 +4281,102 @@ Proof.
     rewrite Heq.
     apply eval_exec_nf_sound.
     exact Hco.
+Qed.
+
+Theorem closure_direct_aeval_avalue_reflection_child_only :
+  forall q v p,
+    JSONPath_Equiv.query_child_only q = true ->
+    (aeval_rel (AValue q) v p <-> Exec.aeval (AValue q) v = Some p).
+Proof.
+  intros q v p Hco.
+  split.
+  - intro Hrel.
+    inversion Hrel; subst; clear Hrel.
+    simpl.
+    pose proof (closure_child_only_eval_singleton_nf q v (p', v1) Hco H0) as Hsingle.
+    pose proof (closure_eval_exec_child_only_eq_nf q v Hco) as Heq.
+    unfold Exec.eval_exec, Exec.eval_exec_nf in Heq.
+    rewrite Heq.
+    unfold Exec.eval_exec_nf in Hsingle.
+    rewrite Hsingle.
+    exact H1.
+  - intro Hexec.
+    destruct (Exec.eval_exec_impl Exec.sel_exec q v) as [|[p' v1] rest] eqn:E.
+    + rewrite (aeval_avalue_none q v E) in Hexec.
+      discriminate.
+    + destruct rest as [|n2 rest'] eqn:Erest.
+      * assert (Esingle : Exec.eval_exec_impl Exec.sel_exec q v = [(p', v1)]).
+        { exact E. }
+        rewrite (aeval_avalue_single q v p' v1 Esingle) in Hexec.
+        eapply AevalValue with (p':=p') (v1:=v1).
+        -- eapply closure_child_only_eval_exec_singleton_rel; eauto.
+        -- exact Hexec.
+      * assert (Emulti : Exec.eval_exec_impl Exec.sel_exec q v = (p', v1) :: n2 :: rest').
+        { exact E. }
+        rewrite (aeval_avalue_multi q v (p', v1) n2 rest' Emulti) in Hexec.
+        discriminate.
+Qed.
+
+Theorem closure_direct_aeval_alengthv_reflection_child_only :
+  forall q v p,
+    JSONPath_Equiv.query_child_only q = true ->
+    (aeval_rel (ALengthV q) v p <-> Exec.aeval (ALengthV q) v = Some p).
+Proof.
+  intros q v p Hco.
+  split.
+  - intro Hrel.
+    inversion Hrel; subst; clear Hrel.
+    + simpl.
+      pose proof (closure_child_only_eval_singleton_nf q v (p', JStr s) Hco H0) as Hsingle.
+      pose proof (closure_eval_exec_child_only_eq_nf q v Hco) as Heq.
+      unfold Exec.eval_exec, Exec.eval_exec_nf in Heq.
+      rewrite Heq.
+      unfold Exec.eval_exec_nf in Hsingle.
+      rewrite Hsingle.
+      reflexivity.
+    + simpl.
+      pose proof (closure_child_only_eval_singleton_nf q v (p', JArr xs) Hco H0) as Hsingle.
+      pose proof (closure_eval_exec_child_only_eq_nf q v Hco) as Heq.
+      unfold Exec.eval_exec, Exec.eval_exec_nf in Heq.
+      rewrite Heq.
+      unfold Exec.eval_exec_nf in Hsingle.
+      rewrite Hsingle.
+      reflexivity.
+    + simpl.
+      pose proof (closure_child_only_eval_singleton_nf q v (p', JObject fs) Hco H0) as Hsingle.
+      pose proof (closure_eval_exec_child_only_eq_nf q v Hco) as Heq.
+      unfold Exec.eval_exec, Exec.eval_exec_nf in Heq.
+      rewrite Heq.
+      unfold Exec.eval_exec_nf in Hsingle.
+      rewrite Hsingle.
+      reflexivity.
+  - intro Hexec.
+    destruct (Exec.eval_exec_impl Exec.sel_exec q v) as [|[p' v1] rest] eqn:E.
+    + rewrite (aeval_alengthv_none q v E) in Hexec.
+      discriminate.
+    + destruct rest as [|n2 rest'] eqn:Erest.
+      * assert (Esingle : Exec.eval_exec_impl Exec.sel_exec q v = [(p', v1)]).
+        { exact E. }
+        destruct v1 as [|b1|n1|s|xs|fs].
+        -- rewrite (aeval_alengthv_null q v p' Esingle) in Hexec. discriminate.
+        -- rewrite (aeval_alengthv_bool q v p' b1 Esingle) in Hexec. discriminate.
+        -- rewrite (aeval_alengthv_num q v p' n1 Esingle) in Hexec. discriminate.
+        -- rewrite (aeval_alengthv_str q v p' s Esingle) in Hexec.
+           inversion Hexec; subst.
+           eapply AevalLengthStr with (p':=p').
+           eapply closure_child_only_eval_exec_singleton_rel; eauto.
+        -- rewrite (aeval_alengthv_arr q v p' xs Esingle) in Hexec.
+           inversion Hexec; subst.
+           eapply AevalLengthArr with (p':=p').
+           eapply closure_child_only_eval_exec_singleton_rel; eauto.
+        -- rewrite (aeval_alengthv_obj q v p' fs Esingle) in Hexec.
+           inversion Hexec; subst.
+           eapply AevalLengthObj with (p':=p').
+           eapply closure_child_only_eval_exec_singleton_rel; eauto.
+      * assert (Emulti : Exec.eval_exec_impl Exec.sel_exec q v = (p', v1) :: n2 :: rest').
+        { exact E. }
+        rewrite (aeval_alengthv_multi q v (p', v1) n2 rest' Emulti) in Hexec.
+        discriminate.
 Qed.
 
 Theorem closure_direct_holds_true_reflection :
@@ -4335,6 +4457,156 @@ Proof.
     + constructor.
     + constructor.
     + exact Hbool.
+Qed.
+
+Definition closure_aexpr_child_only (a:aexpr) : bool :=
+  match a with
+  | APrim _ => true
+  | ACount q | AValue q | ALengthV q => JSONPath_Equiv.query_child_only q
+  end.
+
+Fixpoint closure_fexpr_child_only (f:fexpr) : bool :=
+  match f with
+  | FTrue => true
+  | FNot _ => false
+  | FAnd g h => andb (closure_fexpr_child_only g) (closure_fexpr_child_only h)
+  | FOr g h => andb (closure_fexpr_child_only g) (closure_fexpr_child_only h)
+  | FExists q => JSONPath_Equiv.query_child_only q
+  | FCmp _ a b => andb (closure_aexpr_child_only a) (closure_aexpr_child_only b)
+  | FMatch a _ => closure_aexpr_child_only a
+  | FSearch a _ => closure_aexpr_child_only a
+  end.
+
+Theorem closure_direct_aeval_reflection_child_only :
+  forall a v p,
+    closure_aexpr_child_only a = true ->
+    (aeval_rel a v p <-> Exec.aeval a v = Some p).
+Proof.
+  intros a v p Hco.
+  destruct a; simpl in *.
+  - apply closure_direct_aeval_aprim_reflection.
+  - apply closure_direct_aeval_acount_reflection_child_only. exact Hco.
+  - apply closure_direct_aeval_avalue_reflection_child_only. exact Hco.
+  - apply closure_direct_aeval_alengthv_reflection_child_only. exact Hco.
+Qed.
+
+Theorem closure_direct_holds_reflection_child_only :
+  forall f n,
+    closure_fexpr_child_only f = true ->
+    (holds f n <-> Exec.holds_b f n = true).
+Proof.
+  induction f as [|g IHg|g IHg h IHh|g IHg h IHh|q|op a b|a r|a r];
+    intros [p v] Hco; simpl in *.
+  - apply closure_direct_holds_true_reflection.
+  - split; intro H; discriminate Hco.
+  - apply andb_true_iff in Hco as [Hg Hh].
+    split.
+    + intro Hholds.
+      inversion Hholds; subst; clear Hholds.
+      simpl.
+      match goal with
+      | Hgrel : holds g (p, v), Hhrel : holds h (p, v) |- _ =>
+          apply andb_true_iff;
+          split;
+          [apply (proj1 (IHg (p, v) Hg)); exact Hgrel
+          |apply (proj1 (IHh (p, v) Hh)); exact Hhrel]
+      end.
+    + intro Hbool.
+      simpl in Hbool.
+      apply andb_true_iff in Hbool as [Hbg Hbh].
+      apply HoldsAnd.
+      * apply (proj2 (IHg (p, v) Hg)). exact Hbg.
+      * apply (proj2 (IHh (p, v) Hh)). exact Hbh.
+  - apply andb_true_iff in Hco as [Hg Hh].
+    split.
+    + intro Hholds.
+      inversion Hholds; subst; clear Hholds.
+      * simpl.
+        apply orb_true_iff.
+        left.
+        match goal with
+        | Hgrel : holds g (p, v) |- _ =>
+            apply (proj1 (IHg (p, v) Hg)); exact Hgrel
+        end.
+      * simpl.
+        apply orb_true_iff.
+        right.
+        match goal with
+        | Hhrel : holds h (p, v) |- _ =>
+            apply (proj1 (IHh (p, v) Hh)); exact Hhrel
+        end.
+    + intro Hbool.
+      simpl in Hbool.
+      apply orb_true_iff in Hbool as [Hbg | Hbh].
+      * apply HoldsOr_left.
+        apply (proj2 (IHg (p, v) Hg)).
+        exact Hbg.
+      * apply HoldsOr_right.
+        apply (proj2 (IHh (p, v) Hh)).
+        exact Hbh.
+  - apply closure_direct_holds_exists_reflection_child_only.
+    exact Hco.
+  - apply andb_true_iff in Hco as [Ha Hb].
+    split.
+    + intro Hholds.
+      inversion Hholds as
+        [| | | | | op' a' b' n' v' pa' pb' Hn Hea Heb Hcmp | |];
+        subst; clear Hholds.
+      inversion Hn; subst; clear Hn.
+      simpl.
+      pose proof (proj1 (closure_direct_aeval_reflection_child_only a _ pa' Ha) Hea) as Haexec.
+      pose proof (proj1 (closure_direct_aeval_reflection_child_only b _ pb' Hb) Heb) as Hbexec.
+      rewrite Haexec, Hbexec.
+      exact Hcmp.
+    + intro Hbool.
+      simpl in Hbool.
+      destruct (Exec.aeval a v) as [pa|] eqn:Ea; try discriminate.
+      destruct (Exec.aeval b v) as [pb|] eqn:Eb; try discriminate.
+      eapply HoldsCmp with (v:=v) (pa:=pa) (pb:=pb).
+      * reflexivity.
+      * apply (proj2 (closure_direct_aeval_reflection_child_only a v pa Ha)).
+        exact Ea.
+      * apply (proj2 (closure_direct_aeval_reflection_child_only b v pb Hb)).
+        exact Eb.
+      * exact Hbool.
+  - split.
+    + intro Hholds.
+      inversion Hholds as
+        [| | | | | | a' r' n' v' s' Hn Hea Hm |];
+        subst; clear Hholds.
+      inversion Hn; subst; clear Hn.
+      simpl.
+      pose proof (proj1 (closure_direct_aeval_reflection_child_only a _ (PStr s') Hco) Hea) as Haexec.
+      rewrite Haexec.
+      exact Hm.
+    + intro Hbool.
+      simpl in Hbool.
+      destruct (Exec.aeval a v) as [pa|] eqn:Ea; try discriminate.
+      destruct pa as [|b0|n0|s0]; try discriminate.
+      eapply HoldsMatch with (v:=v) (s:=s0).
+      * reflexivity.
+      * apply (proj2 (closure_direct_aeval_reflection_child_only a v (PStr s0) Hco)).
+        exact Ea.
+      * exact Hbool.
+  - split.
+    + intro Hholds.
+      inversion Hholds as
+        [| | | | | | | a' r' n' v' s' Hn Hea Hm];
+        subst; clear Hholds.
+      inversion Hn; subst; clear Hn.
+      simpl.
+      pose proof (proj1 (closure_direct_aeval_reflection_child_only a _ (PStr s') Hco) Hea) as Haexec.
+      rewrite Haexec.
+      exact Hm.
+    + intro Hbool.
+      simpl in Hbool.
+      destruct (Exec.aeval a v) as [pa|] eqn:Ea; try discriminate.
+      destruct pa as [|b0|n0|s0]; try discriminate.
+      eapply HoldsSearch with (v:=v) (s:=s0).
+      * reflexivity.
+      * apply (proj2 (closure_direct_aeval_reflection_child_only a v (PStr s0) Hco)).
+        exact Ea.
+      * exact Hbool.
 Qed.
 
 Example closure_regression_negative_index :
