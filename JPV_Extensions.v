@@ -26,6 +26,31 @@ Definition codepoint_valid (cp:codepoint) : bool :=
   ((0 <=? cp) && (cp <=? max_codepoint)) &&
   negb ((surrogate_lo <=? cp) && (cp <=? surrogate_hi)).
 
+Definition codepoint_eqb (a b:codepoint) : bool := Z.eqb a b.
+Definition codepoint_ltb (a b:codepoint) : bool := Z.ltb a b.
+Definition codepoint_leb (a b:codepoint) : bool := negb (codepoint_ltb b a).
+
+Fixpoint ustring_eqb (u1 u2:ustring) : bool :=
+  match u1, u2 with
+  | [], [] => true
+  | x1::r1, x2::r2 => andb (codepoint_eqb x1 x2) (ustring_eqb r1 r2)
+  | _, _ => false
+  end.
+
+Fixpoint ustring_ltb (u1 u2:ustring) : bool :=
+  match u1, u2 with
+  | [], [] => false
+  | [], _ => true
+  | _, [] => false
+  | x1::r1, x2::r2 =>
+      if codepoint_ltb x1 x2 then true
+      else if codepoint_eqb x1 x2 then ustring_ltb r1 r2
+      else false
+  end.
+
+Definition ustring_leb (u1 u2:ustring) : bool :=
+  orb (ustring_eqb u1 u2) (ustring_ltb u1 u2).
+
 Definition ascii_to_codepoint (a:ascii) : codepoint :=
   Z.of_nat (nat_of_ascii a).
 
@@ -95,7 +120,601 @@ Fixpoint to_ascii_value (v:uvalue) : JSON.value :=
       JObject (map (fun '(k, v') => (ustring_to_ascii_string k, to_ascii_value v')) fields)
   end.
 
+Definition of_ascii_step (s:JSON.step) : ustep :=
+  match s with
+  | JSON.SName k => USName (string_to_ustring k)
+  | JSON.SIndex i => USIndex i
+  end.
+
+Definition to_ascii_step (s:ustep) : JSON.step :=
+  match s with
+  | USName k => JSON.SName (ustring_to_ascii_string k)
+  | USIndex i => JSON.SIndex i
+  end.
+
+Fixpoint of_ascii_path (p:JSON.path) : upath :=
+  match p with
+  | [] => []
+  | s::ps => of_ascii_step s :: of_ascii_path ps
+  end.
+
+Fixpoint to_ascii_path (p:upath) : JSON.path :=
+  match p with
+  | [] => []
+  | s::ps => to_ascii_step s :: to_ascii_path ps
+  end.
+
+Definition of_ascii_node (n:JSON.node) : unode :=
+  (of_ascii_path (fst n), of_ascii_value (snd n)).
+
+Definition to_ascii_node (n:unode) : JSON.node :=
+  (to_ascii_path (fst n), to_ascii_value (snd n)).
+
+Theorem to_ascii_of_ascii_value :
+  forall v, to_ascii_value (of_ascii_value v) = v.
+Proof.
+  fix IH 1.
+  intro v.
+  destruct v as [|b|n|s|xs|fields]; simpl.
+  - reflexivity.
+  - reflexivity.
+  - reflexivity.
+  - rewrite ascii_roundtrip. reflexivity.
+  - f_equal.
+    induction xs as [|x xs IHxs]; simpl.
+    + reflexivity.
+    + rewrite (IH x), IHxs. reflexivity.
+  - f_equal.
+    induction fields as [|[k v'] fs IHfs]; simpl.
+    + reflexivity.
+    + rewrite ascii_roundtrip.
+      rewrite (IH v').
+      rewrite IHfs.
+      reflexivity.
+Qed.
+
+Theorem to_ascii_of_ascii_path :
+  forall p, to_ascii_path (of_ascii_path p) = p.
+Proof.
+  induction p as [|s p IH]; simpl.
+  - reflexivity.
+  - destruct s as [k|i]; simpl.
+    + rewrite ascii_roundtrip, IH. reflexivity.
+    + rewrite IH. reflexivity.
+Qed.
+
+Theorem to_ascii_of_ascii_node :
+  forall n, to_ascii_node (of_ascii_node n) = n.
+Proof.
+  intros [p v]. unfold to_ascii_node, of_ascii_node. simpl.
+  rewrite to_ascii_of_ascii_path, to_ascii_of_ascii_value.
+  reflexivity.
+Qed.
+
 End UnicodeJSON.
+
+Module UnicodeJSONPath.
+Import Unicode UnicodeJSON.
+
+Inductive uprim :=
+| UPNull
+| UPBool (b:bool)
+| UPNum (n:Q)
+| UPStr (s:ustring).
+
+Definition uprim_of_uvalue (v:uvalue) : option uprim :=
+  match v with
+  | UNull => Some UPNull
+  | UBool b => Some (UPBool b)
+  | UNum n => Some (UPNum n)
+  | UStr s => Some (UPStr s)
+  | _ => None
+  end.
+
+Inductive ucmp := UCEq | UCNe | UCLt | UCLe | UCGt | UCGe.
+
+Inductive uregex :=
+| UREmpty
+| UREps
+| URChr (c:codepoint)
+| URAny
+| URAlt (r1 r2:uregex)
+| URCat (r1 r2:uregex)
+| URStar (r:uregex)
+| URPlus (r:uregex)
+| UROpt (r:uregex)
+| URRepeat (r:uregex) (min max:nat)
+| URCharClass (neg:bool) (chars:list codepoint).
+
+Inductive uaexpr :=
+| UAPrim (p:uprim)
+| UACount (q:uquery)
+| UAValue (q:uquery)
+| UALengthV (q:uquery)
+
+with ufexpr :=
+| UFTrue
+| UFNot (f:ufexpr)
+| UFAnd (f g:ufexpr)
+| UFOr  (f g:ufexpr)
+| UFExists (q:uquery)
+| UFCmp (op:ucmp) (a b:uaexpr)
+| UFMatch (a:uaexpr) (r:uregex)
+| UFSearch (a:uaexpr) (r:uregex)
+
+with uselector :=
+| USelName (s:ustring)
+| USelWildcard
+| USelIndex (i:Z)
+| USelSlice (start end_ : option Z) (stp: Z)
+| USelFilter (f:ufexpr)
+
+with usegment :=
+| UChild (sels:list uselector)
+| UDesc (sels:list uselector)
+
+with uquery := UQuery (segs:list usegment).
+
+Definition uq_segs (q:uquery) : list usegment :=
+  match q with UQuery ss => ss end.
+
+Definition of_ascii_prim (p:JSONPath.prim) : uprim :=
+  match p with
+  | JSONPath.PNull => UPNull
+  | JSONPath.PBool b => UPBool b
+  | JSONPath.PNum n => UPNum n
+  | JSONPath.PStr s => UPStr (string_to_ustring s)
+  end.
+
+Fixpoint of_ascii_regex (r:JSONPath.regex) : uregex :=
+  match r with
+  | JSONPath.REmpty => UREmpty
+  | JSONPath.REps => UREps
+  | JSONPath.RChr c => URChr (ascii_to_codepoint c)
+  | JSONPath.RAny => URAny
+  | JSONPath.RAlt r1 r2 => URAlt (of_ascii_regex r1) (of_ascii_regex r2)
+  | JSONPath.RCat r1 r2 => URCat (of_ascii_regex r1) (of_ascii_regex r2)
+  | JSONPath.RStar r1 => URStar (of_ascii_regex r1)
+  | JSONPath.RPlus r1 => URPlus (of_ascii_regex r1)
+  | JSONPath.ROpt r1 => UROpt (of_ascii_regex r1)
+  | JSONPath.RRepeat r1 min max => URRepeat (of_ascii_regex r1) min max
+  | JSONPath.RCharClass neg chars =>
+      URCharClass neg (map ascii_to_codepoint chars)
+  end.
+
+Fixpoint of_ascii_aexpr (a:JSONPath.aexpr) : uaexpr :=
+  match a with
+  | JSONPath.APrim p => UAPrim (of_ascii_prim p)
+  | JSONPath.ACount q => UACount (of_ascii_query q)
+  | JSONPath.AValue q => UAValue (of_ascii_query q)
+  | JSONPath.ALengthV q => UALengthV (of_ascii_query q)
+  end
+
+with of_ascii_fexpr (f:JSONPath.fexpr) : ufexpr :=
+  match f with
+  | JSONPath.FTrue => UFTrue
+  | JSONPath.FNot g => UFNot (of_ascii_fexpr g)
+  | JSONPath.FAnd g h => UFAnd (of_ascii_fexpr g) (of_ascii_fexpr h)
+  | JSONPath.FOr g h => UFOr (of_ascii_fexpr g) (of_ascii_fexpr h)
+  | JSONPath.FExists q => UFExists (of_ascii_query q)
+  | JSONPath.FCmp op a b =>
+      let op' :=
+        match op with
+        | JSONPath.CEq => UCEq
+        | JSONPath.CNe => UCNe
+        | JSONPath.CLt => UCLt
+        | JSONPath.CLe => UCLe
+        | JSONPath.CGt => UCGt
+        | JSONPath.CGe => UCGe
+        end in
+      UFCmp op' (of_ascii_aexpr a) (of_ascii_aexpr b)
+  | JSONPath.FMatch a r => UFMatch (of_ascii_aexpr a) (of_ascii_regex r)
+  | JSONPath.FSearch a r => UFSearch (of_ascii_aexpr a) (of_ascii_regex r)
+  end
+
+with of_ascii_selector (s:JSONPath.selector) : uselector :=
+  match s with
+  | JSONPath.SelName k => USelName (string_to_ustring k)
+  | JSONPath.SelWildcard => USelWildcard
+  | JSONPath.SelIndex i => USelIndex i
+  | JSONPath.SelSlice start end_ stp => USelSlice start end_ stp
+  | JSONPath.SelFilter f => USelFilter (of_ascii_fexpr f)
+  end
+
+with of_ascii_segment (s:JSONPath.segment) : usegment :=
+  match s with
+  | JSONPath.Child sels => UChild (map of_ascii_selector sels)
+  | JSONPath.Desc sels => UDesc (map of_ascii_selector sels)
+  end
+
+with of_ascii_query (q:JSONPath.query) : uquery :=
+  match q with
+  | JSONPath.Query segs => UQuery (map of_ascii_segment segs)
+  end.
+
+End UnicodeJSONPath.
+
+Module UnicodeRegex.
+Import Unicode UnicodeJSONPath.
+
+Fixpoint nullable (r:uregex) : bool :=
+  match r with
+  | UREmpty => false
+  | UREps => true
+  | URChr _ => false
+  | URAny => false
+  | URAlt r1 r2 => orb (nullable r1) (nullable r2)
+  | URCat r1 r2 => andb (nullable r1) (nullable r2)
+  | URStar _ => true
+  | URPlus r1 => nullable r1
+  | UROpt _ => true
+  | URRepeat r1 min max =>
+      if Nat.ltb max min then false
+      else if Nat.eqb min 0 then true else nullable r1
+  | URCharClass _ _ => false
+  end.
+
+Fixpoint char_in_list (c:codepoint) (cs:list codepoint) : bool :=
+  match cs with
+  | [] => false
+  | c'::cs' => if codepoint_eqb c c' then true else char_in_list c cs'
+  end.
+
+Fixpoint deriv (a:codepoint) (r:uregex) : uregex :=
+  match r with
+  | UREmpty => UREmpty
+  | UREps => UREmpty
+  | URChr c => if codepoint_eqb a c then UREps else UREmpty
+  | URAny => UREps
+  | URAlt r1 r2 => URAlt (deriv a r1) (deriv a r2)
+  | URCat r1 r2 =>
+      let d1 := deriv a r1 in
+      let d2 := deriv a r2 in
+      if nullable r1 then URAlt (URCat d1 r2) d2 else URCat d1 r2
+  | URStar r1 => URCat (deriv a r1) (URStar r1)
+  | URPlus r1 => URCat (deriv a r1) (URStar r1)
+  | UROpt r1 => deriv a r1
+  | URRepeat r1 min max =>
+      if Nat.ltb max min then UREmpty
+      else if Nat.eqb min 0
+      then if Nat.eqb max 0
+           then UREmpty
+           else URAlt (URCat (deriv a r1) (URRepeat r1 0 (max - 1))) UREmpty
+      else URCat (deriv a r1) (URRepeat r1 (min - 1) (max - 1))
+  | URCharClass neg cs =>
+      let matches := char_in_list a cs in
+      if negb neg then
+        if matches then UREps else UREmpty
+      else
+        if matches then UREmpty else UREps
+  end.
+
+Fixpoint rsimpl (r:uregex) : uregex :=
+  match r with
+  | URAlt r1 r2 =>
+      let r1' := rsimpl r1 in
+      let r2' := rsimpl r2 in
+      match r1', r2' with
+      | UREmpty, _ => r2'
+      | _, UREmpty => r1'
+      | _, _ => URAlt r1' r2'
+      end
+  | URCat r1 r2 =>
+      let r1' := rsimpl r1 in
+      let r2' := rsimpl r2 in
+      match r1', r2' with
+      | UREmpty, _ => UREmpty
+      | _, UREmpty => UREmpty
+      | UREps, _ => r2'
+      | _, UREps => r1'
+      | _, _ => URCat r1' r2'
+      end
+  | URStar r1 =>
+      let r1' := rsimpl r1 in
+      match r1' with
+      | UREmpty | UREps => UREps
+      | _ => URStar r1'
+      end
+  | URPlus r1 =>
+      let r1' := rsimpl r1 in
+      match r1' with
+      | UREmpty => UREmpty
+      | _ => URPlus r1'
+      end
+  | UROpt r1 =>
+      UROpt (rsimpl r1)
+  | URRepeat r1 min max =>
+      let r1' := rsimpl r1 in
+      if Nat.ltb max min then UREmpty
+      else if Nat.eqb min 0 then
+        if Nat.eqb max 0 then UREps
+        else URRepeat r1' min max
+      else URRepeat r1' min max
+  | _ => r
+  end.
+
+Definition deriv_simpl (a:codepoint) (r:uregex) : uregex :=
+  rsimpl (deriv a r).
+
+Fixpoint matches_from (r:uregex) (cs:ustring) : bool :=
+  match cs with
+  | [] => nullable r
+  | a::cs' => matches_from (deriv_simpl a r) cs'
+  end.
+
+Definition regex_match (r:uregex) (s:ustring) : bool :=
+  matches_from r s.
+
+Definition regex_search (r:uregex) (s:ustring) : bool :=
+  regex_match (URCat (URStar URAny) (URCat r (URStar URAny))) s.
+
+End UnicodeRegex.
+
+Module UnicodeExec.
+Import Unicode UnicodeJSON UnicodeJSONPath UnicodeRegex.
+
+Definition mk_unode (p:upath) (v:uvalue) : unode := (p, v).
+
+Definition uprim_eq (p q:uprim) : bool :=
+  match p, q with
+  | UPNull, UPNull => true
+  | UPBool b1, UPBool b2 => Bool.eqb b1 b2
+  | UPNum n1, UPNum n2 => Qeqb n1 n2
+  | UPStr s1, UPStr s2 => ustring_eqb s1 s2
+  | _, _ => false
+  end.
+
+Definition uprim_lt (p q:uprim) : bool :=
+  match p, q with
+  | UPNum n1, UPNum n2 => Qltb n1 n2
+  | UPStr s1, UPStr s2 => ustring_ltb s1 s2
+  | _, _ => false
+  end.
+
+Definition cmp_uprim (op:ucmp) (x y:uprim) : bool :=
+  match op with
+  | UCEq => uprim_eq x y
+  | UCNe => negb (uprim_eq x y)
+  | UCLt => uprim_lt x y
+  | UCLe => orb (uprim_lt x y) (uprim_eq x y)
+  | UCGt => uprim_lt y x
+  | UCGe => orb (uprim_lt y x) (uprim_eq x y)
+  end.
+
+Fixpoint sel_exec_nf (sel:uselector) (n:unode) : list unode :=
+  match n with
+  | (p, v) =>
+      match sel, v with
+      | USelName s, UObject fields =>
+          match find (fun kv => ustring_eqb (fst kv) s) fields with
+          | Some (_, v') => [mk_unode (List.app p [USName s]) v']
+          | None => []
+          end
+      | USelName _, _ => []
+
+      | USelWildcard, UObject fields =>
+          map (fun '(k, v') => mk_unode (List.app p [USName k]) v') fields
+      | USelWildcard, UArr xs =>
+          map (fun '(i, v') => mk_unode (List.app p [USIndex (Z.of_nat i)]) v')
+              (index_zip xs)
+      | USelWildcard, _ => []
+
+      | USelIndex z, UArr xs =>
+          let idx := if z <? 0 then Z.of_nat (List.length xs) + z else z in
+          if (idx <? 0) || (idx >=? Z.of_nat (List.length xs)) then []
+          else match nth_error xs (Z.to_nat idx) with
+               | Some v' => [mk_unode (List.app p [USIndex idx]) v']
+               | None => []
+               end
+      | USelIndex _, _ => []
+
+      | USelSlice st en stp, UArr xs =>
+          let ns := slice_positions (List.length xs) st en stp in
+          map (fun n0 => mk_unode (List.app p [USIndex (Z.of_nat n0)])
+                                 (match nth_error xs n0 with
+                                  | Some v' => v'
+                                  | None => UNull
+                                  end)) ns
+      | USelSlice _ _ _, _ => []
+
+      | USelFilter _, _ => []
+      end
+  end.
+
+Fixpoint visit_df_uvalue (p:upath) (v:uvalue) {struct v} : list unode :=
+  match v with
+  | UArr xs =>
+      let fix go (i:nat) (ys:list uvalue) {struct ys} : list (list unode) :=
+          match ys with
+          | [] => []
+          | v'::ys' =>
+              visit_df_uvalue (List.app p [USIndex (Z.of_nat i)]) v'
+              :: go (S i) ys'
+          end in
+      mk_unode p v :: List.concat (go 0%nat xs)
+  | UObject fs =>
+      let fix go (gs:list (ustring * uvalue)) {struct gs} : list (list unode) :=
+          match gs with
+          | [] => []
+          | (k, v')::gs' =>
+              visit_df_uvalue (List.app p [USName k]) v'
+              :: go gs'
+          end in
+      mk_unode p v :: List.concat (go fs)
+  | _ => [mk_unode p v]
+  end.
+
+Definition visit_df_unode (n:unode) : list unode :=
+  let '(p, v) := n in visit_df_uvalue p v.
+
+Section Engine.
+  Variable sel_impl : uselector -> unode -> list unode.
+
+  Definition child_on_node_impl (sels:list uselector) (n:unode) : list unode :=
+    List.concat (map (fun s => sel_impl s n) sels).
+
+  Definition seg_exec_impl (seg:usegment) (n:unode) : list unode :=
+    match seg with
+    | UChild sels => child_on_node_impl sels n
+    | UDesc sels =>
+        let visited := visit_df_unode n in
+        List.concat (map (child_on_node_impl sels) visited)
+    end.
+
+  Fixpoint segs_exec_impl (segs:list usegment) (ns:list unode) : list unode :=
+    match segs with
+    | [] => ns
+    | s::ss => segs_exec_impl ss (List.concat (map (seg_exec_impl s) ns))
+    end.
+
+  Definition eval_exec_impl (q:uquery) (J:uvalue) : list unode :=
+    segs_exec_impl (uq_segs q) [([], J)].
+End Engine.
+
+Definition child_on_node_nf := child_on_node_impl sel_exec_nf.
+Definition seg_exec_nf := seg_exec_impl sel_exec_nf.
+Definition segs_exec_nf := segs_exec_impl sel_exec_nf.
+Definition eval_exec_nf := eval_exec_impl sel_exec_nf.
+
+Fixpoint sel_exec (sel:uselector) (n:unode) {struct sel} : list unode :=
+  match sel, n with
+  | USelFilter f, (p, UObject fields) =>
+      let keep kv :=
+        let '(k, v') := kv in
+        holds_b f (List.app p [USName k], v') in
+      map (fun '(k, v') => mk_unode (List.app p [USName k]) v')
+          (filter (fun kv => keep kv) fields)
+
+  | USelFilter f, (p, UArr xs) =>
+      let keep iv :=
+        let '(i, v') := iv in
+        holds_b f (List.app p [USIndex (Z.of_nat i)], v') in
+      map (fun '(i, v') => mk_unode (List.app p [USIndex (Z.of_nat i)]) v')
+          (filter (fun iv => keep iv) (index_zip xs))
+
+  | USelFilter _, (_, _) => []
+
+  | USelName s, (p, UObject fields) =>
+      match find (fun kv => ustring_eqb (fst kv) s) fields with
+      | Some (_, v') => [mk_unode (List.app p [USName s]) v']
+      | None => []
+      end
+  | USelName _, (_, _) => []
+
+  | USelWildcard, (p, UObject fields) =>
+      map (fun '(k, v') => mk_unode (List.app p [USName k]) v') fields
+  | USelWildcard, (p, UArr xs) =>
+      map (fun '(i, v') => mk_unode (List.app p [USIndex (Z.of_nat i)]) v')
+          (index_zip xs)
+  | USelWildcard, (_, _) => []
+
+  | USelIndex z, (p, UArr xs) =>
+      let idx := if z <? 0 then Z.of_nat (List.length xs) + z else z in
+      if (idx <? 0) || (idx >=? Z.of_nat (List.length xs)) then []
+      else match nth_error xs (Z.to_nat idx) with
+           | Some v' => [mk_unode (List.app p [USIndex idx]) v']
+           | None => []
+           end
+  | USelIndex _, (_, _) => []
+
+  | USelSlice st en stp, (p, UArr xs) =>
+      let ns := slice_positions (List.length xs) st en stp in
+      map (fun n0 => mk_unode (List.app p [USIndex (Z.of_nat n0)])
+                             (match nth_error xs n0 with
+                              | Some v' => v'
+                              | None => UNull
+                              end)) ns
+  | USelSlice _ _ _, (_, _) => []
+  end
+
+with holds_b (f:ufexpr) (n:unode) {struct f} : bool :=
+  let '(_, v) := n in
+  match f with
+  | UFTrue => true
+  | UFNot g => negb (holds_b g n)
+  | UFAnd g h => andb (holds_b g n) (holds_b h n)
+  | UFOr g h => orb (holds_b g n) (holds_b h n)
+  | UFExists q =>
+      negb (Nat.eqb (List.length (eval_exec_impl sel_exec q v)) 0)
+  | UFCmp op a b =>
+      match aeval a v, aeval b v with
+      | Some pa, Some pb => cmp_uprim op pa pb
+      | _, _ => false
+      end
+  | UFMatch a r =>
+      match aeval a v with
+      | Some (UPStr s) => UnicodeRegex.regex_match r s
+      | _ => false
+      end
+  | UFSearch a r =>
+      match aeval a v with
+      | Some (UPStr s) => UnicodeRegex.regex_search r s
+      | _ => false
+      end
+  end
+
+with aeval (a:uaexpr) (v:uvalue) {struct a} : option uprim :=
+  match a with
+  | UAPrim p => Some p
+  | UACount q =>
+      let ns := eval_exec_impl sel_exec q v in
+      Some (UPNum (Q_of_nat (List.length ns)))
+  | UAValue q =>
+      let ns := eval_exec_impl sel_exec q v in
+      match ns with
+      | [(_, v1)] => uprim_of_uvalue v1
+      | _ => None
+      end
+  | UALengthV q =>
+      let ns := eval_exec_impl sel_exec q v in
+      match ns with
+      | [(_, UStr s)] => Some (UPNum (Q_of_nat (List.length s)))
+      | [(_, UArr xs)] => Some (UPNum (Q_of_nat (List.length xs)))
+      | [(_, UObject fs)] => Some (UPNum (Q_of_nat (List.length fs)))
+      | _ => None
+      end
+  end.
+
+Definition child_on_node := child_on_node_impl sel_exec.
+Definition seg_exec := seg_exec_impl sel_exec.
+Definition segs_exec := segs_exec_impl sel_exec.
+Definition eval_exec := eval_exec_impl sel_exec.
+
+Definition selector_child_only (sel:uselector) : bool :=
+  match sel with
+  | USelFilter _ => false
+  | _ => true
+  end.
+
+Definition segment_child_only (seg:usegment) : bool :=
+  match seg with
+  | UChild sels => forallb selector_child_only sels
+  | UDesc _ => false
+  end.
+
+Definition query_child_only (q:uquery) : bool :=
+  match q with
+  | UQuery segs => forallb segment_child_only segs
+  end.
+
+Definition linear_selector (sel:uselector) : bool :=
+  match sel with
+  | USelName _ | USelIndex _ => true
+  | _ => false
+  end.
+
+Definition linear_segment (s:usegment) : bool :=
+  match s with
+  | UChild [sel] => linear_selector sel
+  | _ => false
+  end.
+
+Definition linear_query (q:uquery) : bool :=
+  match q with
+  | UQuery segs => forallb linear_segment segs
+  end.
+
+End UnicodeExec.
 
 (* ------------------------------------------------------------ *)
 (* ABNF Tokens + Parser (Core Subset)                           *)

@@ -80,6 +80,101 @@ Module API.
   Definition paths_of  (ns:list node) : list path  := map fst ns.
 End API.
 
+Module UnicodeAPI.
+  Import Unicode UnicodeJSON UnicodeJSONPath UnicodeExec.
+
+  Inductive exec_error :=
+  | E_NotWF
+  | E_NotChildOnly
+  | E_NotLinear
+  | E_NotFound
+  | E_Multiple.
+
+  Definition show_error (e:exec_error) : ustring :=
+    string_to_ustring
+      (match e with
+       | E_NotWF => "not_wf"
+       | E_NotChildOnly => "not_child_only"
+       | E_NotLinear => "not_linear"
+       | E_NotFound => "not_found"
+       | E_Multiple => "multiple_results"
+       end).
+
+  Inductive result (A E:Type) :=
+  | Ok (a:A)
+  | Error (e:E).
+  Arguments Ok   {A E} _.
+  Arguments Error{A E} _.
+
+  Fixpoint wf_fexpr (f:ufexpr) : bool :=
+    match f with
+    | UFTrue => true
+    | UFNot g => wf_fexpr g
+    | UFAnd g h | UFOr g h => andb (wf_fexpr g) (wf_fexpr h)
+    | UFExists _ => true
+    | UFCmp _ _ _ => true
+    | UFMatch _ _ | UFSearch _ _ => true
+    end.
+
+  Definition wf_selector (sel:uselector) : bool :=
+    match sel with
+    | USelFilter f => wf_fexpr f
+    | _ => true
+    end.
+
+  Definition wf_segment (seg:usegment) : bool :=
+    match seg with
+    | UChild sels | UDesc sels => forallb wf_selector sels
+    end.
+
+  Definition wf_query (q:uquery) : bool :=
+    match q with UQuery segs => forallb wf_segment segs end.
+
+  Definition eval_checked (q:uquery) (J:uvalue)
+    : result (list unode) exec_error :=
+    if wf_query q then Ok (UnicodeExec.eval_exec q J) else Error E_NotWF.
+
+  Definition eval_nf_checked (q:uquery) (J:uvalue)
+    : result (list unode) exec_error :=
+    if UnicodeExec.query_child_only q
+    then Ok (UnicodeExec.eval_exec_nf q J)
+    else Error E_NotChildOnly.
+
+  Definition eval_one_linear (q:uquery) (J:uvalue)
+    : result unode exec_error :=
+    if UnicodeExec.linear_query q then
+      match UnicodeExec.eval_exec_nf q J with
+      | [n] => Ok n
+      | [] => Error E_NotFound
+      | _ => Error E_Multiple
+      end
+    else Error E_NotLinear.
+
+  Definition values_of (ns:list unode) : list uvalue := map snd ns.
+  Definition paths_of  (ns:list unode) : list upath  := map fst ns.
+
+  Definition eval_exec_ascii_bridge
+      (q:JSONPath.query) (J:JSON.value) : list JSON.node :=
+    map UnicodeJSON.to_ascii_node
+        (UnicodeExec.eval_exec
+           (UnicodeJSONPath.of_ascii_query q)
+           (UnicodeJSON.of_ascii_value J)).
+
+  Theorem eval_exec_ascii_bridge_empty_query :
+    forall J,
+      eval_exec_ascii_bridge (JSONPath.Query []) J = [([], J)].
+  Proof.
+    intros J. unfold eval_exec_ascii_bridge. simpl.
+    assert (Hnode : UnicodeJSON.to_ascii_node ([], UnicodeJSON.of_ascii_value J) = ([], J)).
+    {
+      unfold UnicodeJSON.to_ascii_node. simpl.
+      rewrite UnicodeJSON.to_ascii_of_ascii_value.
+      reflexivity.
+    }
+    rewrite Hnode. reflexivity.
+  Qed.
+End UnicodeAPI.
+
 (* ------------------------------------------------------------ *)
 (* QuickChick section                                            *)
 (* ------------------------------------------------------------ *)
@@ -106,7 +201,12 @@ Extraction NoInline
   Exec.eval_exec_nf
   Exec.visit_df_node
   Regex.regex_match
-  Regex.regex_search.
+  Regex.regex_search
+  UnicodeExec.eval_exec
+  UnicodeExec.eval_exec_nf
+  UnicodeExec.visit_df_unode
+  UnicodeRegex.regex_match
+  UnicodeRegex.regex_search.
 
 Extraction Inline
   string_eqb ascii_eqb ascii_ltb ascii_leb
@@ -115,7 +215,11 @@ Extraction Inline
   nth_default
   Exec.child_on_node_impl Exec.seg_exec_impl Exec.segs_exec_impl
   Regex.nullable Regex.deriv Regex.rsimpl Regex.deriv_simpl
-  Regex.list_of_string Regex.matches_from.
+  Regex.list_of_string Regex.matches_from
+  Unicode.ustring_eqb Unicode.ustring_ltb Unicode.ustring_leb
+  UnicodeRegex.nullable UnicodeRegex.deriv UnicodeRegex.rsimpl UnicodeRegex.deriv_simpl
+  UnicodeRegex.matches_from
+  UnicodeExec.child_on_node_impl UnicodeExec.seg_exec_impl UnicodeExec.segs_exec_impl.
 
 Separate Extraction
   JSON
@@ -123,5 +227,11 @@ Separate Extraction
   Regex
   Exec
   Typing
+  Unicode
+  UnicodeJSON
+  UnicodeJSONPath
+  UnicodeRegex
+  UnicodeExec
+  UnicodeAPI
   company_json
   acme_db_json.

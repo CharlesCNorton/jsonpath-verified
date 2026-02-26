@@ -1,4 +1,13 @@
 # jsonpath-verified: Cure List
 
+## Completed
+
 1. Add a `_CoqProject` file and Makefile for reproducible builds. **Status:** done.
 2. Split the single file into per-module files gated by the build system. **Status:** done via `JPV_Core.v`, `JPV_Formalization.v`, `JPV_Extensions.v`, `JPV_API_Extraction.v`, with facade `jsonpath_verified.v`.
+
+## Remaining (RFC Completeness)
+
+1. Replace the ASCII-first runtime with an end-to-end Unicode model across JSON values, JSONPath syntax, regex/string operations, and API surfaces; keep compatibility lemmas where needed. **Status:** done via `Unicode`, `UnicodeJSON`, `UnicodeJSONPath`, `UnicodeRegex`, `UnicodeExec`, and `UnicodeAPI`, including ASCII bridge conversions/lemmas.
+2. Extend `JSONPathABNF` from the current core subset to full RFC 9535 grammar coverage, and implement a total parser for the full surface language.
+3. Strengthen executable-relational correspondence from the current child-only/filter-free and linear fragments to the full query language (including filters) with precise order/permutation statements.
+4. Replace the conservative `Typing.wf_fexpr` gate with a precise, proved criterion (or full semantic proof path) that does not reject RFC-valid filter forms, and align API error behavior with that proof.
