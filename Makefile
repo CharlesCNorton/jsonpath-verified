@@ -1,6 +1,6 @@
 COQPROJECT ?= _CoqProject
 COQMAKEFILE ?= CoqMakefile
-COQBIN ?= /home/zootest/.opam/certicoq-8.20/bin/
+COQBIN ?=
 COQMAKEFILE_TOOL ?= $(COQBIN)coq_makefile
 ifeq ($(OS),Windows_NT)
 PYTHON ?= py -3
@@ -8,7 +8,7 @@ else
 PYTHON ?= python3
 endif
 
-.PHONY: all clean distclean regen proof-hygiene
+.PHONY: all clean distclean regen proof-hygiene path-hygiene
 
 all: $(COQMAKEFILE)
 	$(MAKE) -f $(COQMAKEFILE) COQBIN="$(COQBIN)" all
@@ -21,6 +21,9 @@ regen:
 
 proof-hygiene:
 	@$(PYTHON) scripts/proof_hygiene.py
+
+path-hygiene:
+	@$(PYTHON) scripts/check_local_paths.py
 
 clean: $(COQMAKEFILE)
 	$(MAKE) -f $(COQMAKEFILE) COQBIN="$(COQBIN)" clean

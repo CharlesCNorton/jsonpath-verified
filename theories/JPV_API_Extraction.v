@@ -221,6 +221,74 @@ Module API.
   (* QoL: projections *)
   Definition values_of (ns:list node) : list value := map snd ns.
   Definition paths_of  (ns:list node) : list path  := map fst ns.
+
+  Inductive parse_error_kind :=
+  | PE_LexUnexpectedChar
+  | PE_LexInvalidCodepoint
+  | PE_LexUnterminatedString
+  | PE_LexInvalidNumber
+  | PE_SyntaxError.
+
+  Record parse_error := {
+    parse_err_pos : nat;
+    parse_err_kind : parse_error_kind
+  }.
+
+  Definition show_parse_error_kind (k:parse_error_kind) : string :=
+    match k with
+    | PE_LexUnexpectedChar => "lex_unexpected_char"
+    | PE_LexInvalidCodepoint => "lex_invalid_codepoint"
+    | PE_LexUnterminatedString => "lex_unterminated_string"
+    | PE_LexInvalidNumber => "lex_invalid_number"
+    | PE_SyntaxError => "syntax_error"
+    end.
+
+  Definition map_parse_error_kind
+      (k:JSONPathABNF.lex_error_kind) : parse_error_kind :=
+    match k with
+    | JSONPathABNF.LexUnexpectedChar => PE_LexUnexpectedChar
+    | JSONPathABNF.LexInvalidCodepoint => PE_LexInvalidCodepoint
+    | JSONPathABNF.LexUnterminatedString => PE_LexUnterminatedString
+    | JSONPathABNF.LexInvalidNumber => PE_LexInvalidNumber
+    end.
+
+  Definition map_parse_error (e:JSONPathABNF.surface_parse_error) : parse_error :=
+    {| parse_err_pos := JSONPathABNF.surface_err_pos e;
+       parse_err_kind :=
+         match JSONPathABNF.surface_err_kind e with
+         | JSONPathABNF.SurfaceLexError k => map_parse_error_kind k
+         | JSONPathABNF.SurfaceSyntaxError => PE_SyntaxError
+         end |}.
+
+  Definition parse_query_string (s:string) : result query parse_error :=
+    match JSONPathABNF.parse_surface_query_string (Unicode.string_to_ustring s) with
+    | JSONPathABNF.SurfaceParseOk q => Ok q
+    | JSONPathABNF.SurfaceParseError e => Error (map_parse_error e)
+    end.
+
+  Definition parse_query_string_opt (s:string) : option query :=
+    match parse_query_string s with
+    | Ok q => Some q
+    | Error _ => None
+    end.
+
+  Definition parse_query_error_kind_opt (s:string) : option parse_error_kind :=
+    match parse_query_string s with
+    | Ok _ => None
+    | Error e => Some (parse_err_kind e)
+    end.
+
+  Definition parse_query_error_pos_opt (s:string) : option nat :=
+    match parse_query_string s with
+    | Ok _ => None
+    | Error e => Some (parse_err_pos e)
+    end.
+
+  Definition parse_query_error_code_opt (s:string) : option string :=
+    match parse_query_string s with
+    | Ok _ => None
+    | Error e => Some (show_parse_error_kind (parse_err_kind e))
+    end.
 End API.
 
 Module UnicodeAPI.

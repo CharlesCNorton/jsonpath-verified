@@ -11,6 +11,7 @@ Mechanized JSONPath (RFC 9535) semantics in Coq/Rocq, with executable evaluators
 - `theories/jsonpath_verified.v`: facade that re-exports all modules above.
 - `tests/quickchick_run.v`: QuickChick entry file.
 - `scripts/proof_hygiene.py`: guard that rejects `Admitted` and `Axiom`.
+- `demo/crane-cli/README.md`: Crane C++ demo build/run guide.
 - `_CoqProject`, `Makefile`: build configuration.
 
 ## What is formalized
@@ -152,3 +153,17 @@ Compiling `theories/JPV_API_Extraction.v` runs extraction directives and emits O
 - example documents (`company_json`, `acme_db_json`)
 
 Extraction is configured for exact arithmetic and total evaluator paths.
+
+## C++ CLI Demo (Crane)
+
+The CLI demo is currently the most practical end-to-end runnable path with the existing Crane extraction toolchain.
+
+See `demo/crane-cli/README.md` for full build and run instructions.
+
+## Path Hygiene
+
+This repository blocks machine-local absolute paths from being committed.
+
+- local check: `make path-hygiene`
+- pre-commit hook: `git config core.hooksPath .githooks`
+- CI check: `.github/workflows/path-hygiene.yml`

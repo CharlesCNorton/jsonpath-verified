@@ -16,3 +16,19 @@ CoqMakefile.conf
 
 # Keep only the source
 !jsonpath_verified.v
+
+# C++ extraction/build artifacts
+cpp/gen/*.h
+cpp/gen/*.cpp
+cpp/bin/
+build/
+out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.obj
+*.pdb
+*.ilk
+*.exe
