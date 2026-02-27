@@ -11,7 +11,7 @@ Mechanized JSONPath (RFC 9535) semantics in Coq/Rocq, with executable evaluators
 - `theories/jsonpath_verified.v`: facade that re-exports all modules above.
 - `tests/quickchick_run.v`: QuickChick entry file.
 - `scripts/proof_hygiene.py`: guard that rejects `Admitted` and `Axiom`.
-- `demo/crane-cli/README.md`: Crane C++ demo build/run guide.
+- `demo/crane-cli/`: self-contained Crane C++ demo (source, extraction scripts, build scripts, docs).
 - `_CoqProject`, `Makefile`: build configuration.
 
 ## What is formalized

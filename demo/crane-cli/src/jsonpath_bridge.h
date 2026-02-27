@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "gen/jsonpath_api.h"
+#include "jsonpath_api.h"
 
 namespace jpv {
 

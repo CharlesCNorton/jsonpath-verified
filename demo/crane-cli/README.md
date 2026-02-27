@@ -4,10 +4,11 @@ This demo is the most practical end-to-end runnable path for this project with t
 
 ## What it includes
 
-- extracted API output in `cpp/gen/` (`jsonpath_api.h`, `jsonpath_api.cpp`)
-- bridge layer in `cpp/jsonpath_bridge.{h,cpp}`
-- CLI entrypoint in `cpp/jsonpath_cli.cpp`
-- optional terminal scroller demo in `cpp/jsonpath_scroller_demo.cpp`
+- extraction directives in `demo/crane-cli/extraction/`
+- extracted API output in `demo/crane-cli/gen/` (`jsonpath_api.h`, `jsonpath_api.cpp`)
+- bridge layer in `demo/crane-cli/src/jsonpath_bridge.{h,cpp}`
+- CLI entrypoint in `demo/crane-cli/src/jsonpath_cli.cpp`
+- optional terminal scroller demo in `demo/crane-cli/src/jsonpath_scroller_demo.cpp`
 
 ## Prerequisites
 
@@ -20,27 +21,27 @@ This demo is the most practical end-to-end runnable path for this project with t
 From repository root:
 
 ```bash
-CRANE_ROOT=/path/to/crane cpp/build_cli_wsl.sh
+CRANE_ROOT=/path/to/crane demo/crane-cli/build_cli_wsl.sh
 ```
 
 Output:
 
-- `cpp/gen/jsonpath_api.h`
-- `cpp/gen/jsonpath_api.cpp`
-- `cpp/bin/jsonpath_cli`
+- `demo/crane-cli/gen/jsonpath_api.h`
+- `demo/crane-cli/gen/jsonpath_api.cpp`
+- `demo/crane-cli/bin/jsonpath_cli`
 
 ## Run the CLI
 
 Inline JSON:
 
 ```bash
-./cpp/bin/jsonpath_cli --query '$.store.book[*].title' --json '{"store":{"book":[{"title":"A"},{"title":"B"}]}}'
+./demo/crane-cli/bin/jsonpath_cli --query '$.store.book[*].title' --json '{"store":{"book":[{"title":"A"},{"title":"B"}]}}'
 ```
 
 From file:
 
 ```bash
-./cpp/bin/jsonpath_cli --query '$.store.book[0].title' --json-file sample.json
+./demo/crane-cli/bin/jsonpath_cli --query '$.store.book[0].title' --json-file sample.json
 ```
 
 The CLI prints a JSON array of matched values.
@@ -48,8 +49,8 @@ The CLI prints a JSON array of matched values.
 ## Build the scroller demo
 
 ```bash
-CRANE_ROOT=/path/to/crane cpp/build_scroller_demo_wsl.sh
-./cpp/bin/jsonpath_scroller_demo
+CRANE_ROOT=/path/to/crane demo/crane-cli/build_scroller_demo_wsl.sh
+./demo/crane-cli/bin/jsonpath_scroller_demo
 ```
 
 ## Notes

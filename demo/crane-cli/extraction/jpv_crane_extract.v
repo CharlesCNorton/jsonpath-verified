@@ -2,7 +2,7 @@ Require Import JPV_Core JPV_Formalization JPV_Extensions JPV_API_Extraction.
 Require Crane.Extraction.
 Require Crane.Mapping.Std.
 
-Crane Extraction "cpp/gen/jsonpath_api"
+Crane Extraction "demo/crane-cli/gen/jsonpath_api"
   API.parse_query_string
   API.parse_query_string_opt
   API.parse_query_error_kind_opt

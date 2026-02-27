@@ -10,10 +10,10 @@ import sys
 from pathlib import Path
 
 PATTERNS = (
-    re.compile(r"(?<![\w/])[A-Za-z]:[\\/][^\s\"'<>|]+"),
-    re.compile(r"(?<![\w/])/mnt/[A-Za-z]/[^\s\"'<>|]+"),
-    re.compile(r"(?<![\w/])/home/[^/\s]+/[^\s\"'<>|]+"),
-    re.compile(r"(?<![\w/])/Users/[^/\s]+/[^\s\"'<>|]+"),
+    re.compile(r"(?<![\w/])[A-Za-z]:[\\/][A-Za-z0-9._~\-\\/]+"),
+    re.compile(r"(?<![\w/])/mnt/[A-Za-z]/[A-Za-z0-9._~\-/]+"),
+    re.compile(r"(?<![\w/])/home/[A-Za-z0-9._-]+/[A-Za-z0-9._~\-/]+"),
+    re.compile(r"(?<![\w/])/Users/[A-Za-z0-9._-]+/[A-Za-z0-9._~\-/]+"),
 )
 
 

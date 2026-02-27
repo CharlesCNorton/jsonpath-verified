@@ -1,4 +1,4 @@
-#include "gen/jsonpath_api.h"
+#include "jsonpath_api.h"
 
 #include <algorithm>
 #include <chrono>
@@ -488,4 +488,3 @@ int main(int argc, char **argv) {
 
   return 0;
 }
-

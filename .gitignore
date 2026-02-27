@@ -18,6 +18,9 @@ CoqMakefile.conf
 !jsonpath_verified.v
 
 # C++ extraction/build artifacts
+demo/crane-cli/gen/*.h
+demo/crane-cli/gen/*.cpp
+demo/crane-cli/bin/
 cpp/gen/*.h
 cpp/gen/*.cpp
 cpp/bin/
